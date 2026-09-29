@@ -70,6 +70,8 @@ export class DocumentStore {
     if (this.inpaintMaskLayerId === next) return;
     this.inpaintMaskLayerId = next;
     hooks.renderLayers();
+    // マスク指定はキャンバス表示 (ドット網掛) に影響するため即時再描画する
+    hooks.render();
     const l = this.layers.find((x) => x.id === next);
     hooks.toast(l ? `「${l.name}」を Inpainting マスクに指定しました` : "Inpainting マスクの指定を解除しました", "ok");
   }

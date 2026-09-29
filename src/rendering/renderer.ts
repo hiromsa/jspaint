@@ -7,6 +7,7 @@ import { filters } from "../core/filterEngine";
 import { state } from "../core/editorState";
 import { selection } from "../core/selectionStore";
 import { viewport } from "../core/viewState";
+import { drawMaskLayerDisplay } from "./maskDisplay";
 import { warpSession } from "../puppet/warpSession";
 import { drawCursor, drawDragSizeBadge, drawPuppetWarpOverlay, drawSelectionPreview, drawStrokePreview } from "./previews";
 
@@ -48,10 +49,13 @@ export function render(): void {
 
   // レイヤー (下 → 上)。フィルター有効時、編集対象レイヤーは適用済みプレビューに差し替える。
   // パペットワープ中は変形プレビューに差し替える
+  // Inpainting マスクレイヤーは Forge 風のドット網掛表示 (レイヤーデータは変更しない)
   for (const l of doc.layers) {
     if (!l.visible) continue;
     const filtered = filters.layerPreview(l);
-    vctx.drawImage(filtered ?? warpSession.displayCanvas(l.id) ?? l.canvas, 0, 0);
+    const source = filtered ?? warpSession.displayCanvas(l.id) ?? l.canvas;
+    if (doc.isInpaintMaskLayer(l)) drawMaskLayerDisplay(vctx, source);
+    else vctx.drawImage(source, 0, 0);
   }
 
   drawStrokePreview(vctx);

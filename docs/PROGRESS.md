@@ -37,6 +37,11 @@ TypeScript 実装の原型として、描画/選択/フィルター/エクスポ
 - **Inpainting マスクレイヤー指定**: レイヤーパネルの杖ボタンでレイヤーを 1 枚だけ
   マスクに指定できる (指定レイヤーは緑の「マスク」バッジ + 行強調)。
   ドキュメント差し替え / キャンセル (初期化) / レイヤー削除時は指定が解除される
+- **マスクレイヤーのドット網掛表示**: Inpainting マスク指定レイヤーはキャンバス上で
+  SD WebUI Forge と同様の**白黒チェッカー (10px) × 50% 不透明度のドット網掛**で表示される
+  (`rendering/maskDisplay.ts`)。描画色に関係なく表示はドットに統一され、レイヤーデータや
+  エクスポートされるマスクには影響しない (表示のみの変換)。指定の付け替えは即時反映
+  (`setInpaintMaskLayer` が render を呼ぶよう修正)。E2E: `npm run test:maskdisplay` (9 ケース合格)
 - **エクスポートのマスク生成**: マスク指定レイヤーがある場合は**そのレイヤーのみ**から
   生成 (不透明ピクセル = 白。選択範囲は含めない)。未指定時は従来どおり
   全ペイントレイヤー (可視) + 最終選択範囲
@@ -114,6 +119,7 @@ TypeScript 実装の原型として、描画/選択/フィルター/エクスポ
 | 18 | **表示切替の上書き不具合 (確定/取消等が全ツールで表示される) と起動直後の選択不具合を修正** — ① 17 の汎用化だけでは `.btn { display: inline-flex }` 等 (style.css の後続行・同詳細度) が CSS カスケードで上書き勝ちし、パペットワープの「確定/取消」・選択系の「塗りつぶし/解除」ボタンが**全ツール選択中で表示される**状態だったため `.is-hidden { display: none !important }` に修正。② 起動時の `doc.init()` が `selection.resizeTo()` を呼んでおらず選択マスクが 1×1px のままになり、**起動直後 (デモ画像) で選択すると Marching Ants の点線が表示されず・範囲限定も効かない**不具合を修正 (`startApp` で `selection.resizeTo(doc.width, doc.height)` を呼び出し。「開く/ドロップ」経路では applyBaseImage が呼ぶため既存 E2E では未検出だった)。E2E (`npm run test:filterpen` 18 ケース) に「矩形選択で Marching Ants (点線) が表示される」「brush/bucket/filter-pen/select-rect/puppet-warp の各選択時に無関係なボタン (確定/取消/塗りつぶし/解除) が表示されない」検証を追加 |
 | 19 | **フィルターのスライダー操作でスイッチを自動 ON** — 「スライダーをいじってからスイッチを ON にする手間」の解消。`filtersPanel.ts` の共通実装 (`bindFxScope`) で、スライダー (`input[data-fx-range]`) の操作を有効化の意思表示として扱い `settings.on[key] = true` に自動設定する (ノイズの種類カラー/グレーボタンも `on.noise = true` で自動 ON)。共通実装のため**ツールタブ (フィルター効果) / フィルタータブ両方**に一度で反映。E2E に「ペン用 / フィルタータブのスライダー操作でスイッチが自動 ON」「ノイズの種類ボタンでも自動 ON」検証を追加 (`npm run test:filterpen` 21 合格) |
 | 20 | **親アプリ (Forge 拡張) 連携の本実装: `JSPAINT_LOAD` 受信 + Inpainting マスクレイヤー指定** — ① `ui/hostBridge.ts` を新設し、embed 時に親から `postMessage({ type: "JSPAINT_LOAD", image, mask?, name? })` を受けてドキュメントを差し替える (README の連携仕様に準拠)。② `mask` (黒=描画なし / 白=描画あり) は白の輝度を不透明度に変換した「Inpaintマスク」レイヤーとして追加し、新設の **Inpainting マスクレイヤー指定** (`documentStore.inpaintMaskLayerId`・最大 1 枚 / レイヤーパネルの杖ボタンで付け替え・緑バッジ表示・`is-mask` 行強調) に自動設定。③ エクスポートのマスク生成 (`exportModal.buildMaskUrl`) は指定レイヤーがある場合 **そのレイヤーのみ**から (選択範囲は含めない) とし、未指定時は従来どおり全ペイントレイヤー + 選択範囲。④ **compositeImage からマスクレイヤーを除外** (`compositeCanvas` — 出力画像にマスクを焼き込まず、マスクは maskImage として別送出。canvas 表示 / バケツ塗り / スポイトの基準には影響なし)。⑤ embed で「親アプリへ送信」成功後、送信済み表示を一瞬見せて Export モーダルを自動で閉じ、描画画面へ戻る (Forge 側の iframe 再利用時に Export 画面が残らない)。⑥ ホストからのマスクレイヤーは `addImageLayer` の新オプション `{ active: false }` で**カレントにしない** (元画像を `selectLayer` でカレントにし、開いた直後から画像を編集できる)。検証: 新規 `npm run test:hostbridge` (親ページ + iframe embed の postMessage 往復 E2E、12 ケース合格 — ドキュメント差し替え / マスクレイヤー追加・自動指定 / カレントは元画像 / ボタントグル / JSPAINT_EXPORT 往復 / compositeImage へのマスク非混入 / maskImage ピクセル検証) + `npm run test:imageio` 27 合格 + typecheck + build。docs 更新 (README 親アプリ連携セクション) |
+| 21 | **Inpainting マスクレイヤーのドット網掛表示 (SD WebUI Forge 風)** — マスク指定レイヤーのキャンバス表示を、Forge の Inpaint マスク (high contrast: `modules_forge/forge_canvas/canvas.js` の `contrast_scribbles` = 10px 白黒チェッカーパターン × 描画キャンバス opacity 0.5) と同じ「透過ドット網掛」に変更。① 新設 `rendering/maskDisplay.ts` — レイヤーのアルファでチェッカーパターンを切り抜き (`destination-in`) 50% 不透明度で合成する表示専用変換で、レイヤーの実データ (色・アルファ)・エクスポートされるマスク画像には無影響。どんな色で描いても表示はドットに統一される。② `renderer.ts` のレイヤーループでマスク指定レイヤーのみ `drawMaskLayerDisplay` 経由に差し替え (フィルター / パペットワープのプレビュー canvas があればそれをソースに使用)。③ 過剰変換の副作用修正: `setInpaintMaskLayer` が `hooks.render()` を呼んでおらずマスク指定を切り替えてもキャンバスが再描画されない潜在不具合を修正 (以前は表示がマスク指定に依存しなかったため顕在化しなかった)。検証: 新規 `npm run test:maskdisplay` (puppeteer-core E2E、9 ケース合格 — view 中央行の画素走査で 網掛の表示/マスク領域限定/解除で復帰/透明部分への描画でドット追加/描画色が露出しないことを検証) + 既存 4 テスト (hostbridge 12 / imageio 27 / filterpen 21 / puppet 25) 全合格 + typecheck + build。docs 更新 (ui.md 2.3 / README / PROGRESS.md) |
 
 ## 次回候補 (Backlog)
 

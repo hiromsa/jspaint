@@ -1,7 +1,7 @@
 {
   "name": "jspaint",
   "private": true,
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "JSPaint - Inpainting pre-processing paint tool for SD WebUI Forge (UI mock)",
   "type": "module",
   "scripts": {
@@ -12,7 +12,8 @@
     "test:puppet": "esbuild scripts/verify-puppet.ts --bundle --platform=node --format=esm --outfile=%TEMP%\\verify-puppet.mjs && node %TEMP%\\verify-puppet.mjs",
     "test:filterpen": "esbuild scripts/verify-filterpen.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __createRequire } from 'module'; const require = __createRequire(import.meta.url);\" --outfile=%TEMP%\\verify-filterpen.mjs && node %TEMP%\\verify-filterpen.mjs",
     "test:imageio": "esbuild scripts/verify-imageio.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __createRequire } from 'module'; const require = __createRequire(import.meta.url);\" --outfile=%TEMP%\\verify-imageio.mjs && node %TEMP%\\verify-imageio.mjs",
-    "test:hostbridge": "esbuild scripts/verify-hostbridge.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __createRequire } from 'module'; const require = __createRequire(import.meta.url);\" --outfile=%TEMP%\\verify-hostbridge.mjs && node %TEMP%\\verify-hostbridge.mjs"
+    "test:hostbridge": "esbuild scripts/verify-hostbridge.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __createRequire } from 'module'; const require = __createRequire(import.meta.url);\" --outfile=%TEMP%\\verify-hostbridge.mjs && node %TEMP%\\verify-hostbridge.mjs",
+    "test:maskdisplay": "esbuild scripts/verify-maskdisplay.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __createRequire } from 'module'; const require = __createRequire(import.meta.url);\" --outfile=%TEMP%\\verify-maskdisplay.mjs && node %TEMP%\\verify-maskdisplay.mjs"
   },
   "devDependencies": {
     "puppeteer-core": "^25.12.0",
