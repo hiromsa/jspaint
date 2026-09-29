@@ -1,0 +1,80 @@
+/**
+ * interaction/keyboard.ts — キーボードショートカット
+ * UI (パネル / モーダル) 側の操作は deps として受け取る (Step 4 で直接 import に置き換え)。
+ */
+import { $ } from "../ui/dom";
+import { state } from "../core/editorState";
+import { hooks } from "../core/hooks";
+import { interaction } from "../core/interactionState";
+import { selection } from "../core/selectionStore";
+import { history } from "../core/historyStack";
+import { deleteSelectionContents, deselect, fillSelection, selectAll } from "../core/selectionOps";
+import { fitView, setZoom } from "../core/viewState";
+import { KEY_TOOL, TOOLS } from "../core/toolDefs";
+import type { ToolId } from "../core/types";
+import { cancelPolygon, closePolygon } from "./pointer";
+
+export interface KeyboardDeps {
+  openExport(): void;
+  closeExport(): void;
+  setTool(tool: ToolId): void;
+  syncSlider(): void;
+  swapColors(): void;
+}
+
+let deps: KeyboardDeps;
+
+/** window へ keydown / keyup を配線する */
+export function bindKeyboard(d: KeyboardDeps): void {
+  deps = d;
+  window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keyup", onKeyUp);
+}
+
+function onKeyDown(e: KeyboardEvent): void {
+  const tag = (e.target as HTMLElement).tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA") return;
+  if (e.key === "Alt") interaction.altKey = true;
+  const k = e.key.toLowerCase();
+
+  if ((e.ctrlKey || e.metaKey) && k === "z") { e.preventDefault(); if (e.shiftKey) history.redo(); else history.undo(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === "y") { e.preventDefault(); history.redo(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === "a") { e.preventDefault(); selectAll(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === "d") { e.preventDefault(); deselect(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); deps.openExport(); return; }
+  if (e.altKey && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); fillSelection(); return; }
+
+  if (e.key === " ") { e.preventDefault(); state.spacePan = true; $("#stage").style.cursor = "grab"; return; }
+  if (e.key === "Escape") {
+    if (!($("#modal-export") as HTMLElement).hidden) { deps.closeExport(); return; }
+    if (interaction.polyDrag || interaction.polyPoints.length > 0) { cancelPolygon(); return; }
+    if (interaction.lassoPath) { interaction.lassoPath = null; hooks.render(); hooks.toast("投げ縄選択を取消", "info"); return; }
+    if (interaction.preview || interaction.dragStart) { interaction.preview = null; interaction.dragStart = null; hooks.render(); return; }
+    // 選択範囲をクリア
+    if (selection.hasSelection) deselect();
+    return;
+  }
+  if (e.key === "Enter" && state.tool === "polygon") { closePolygon(); return; }
+  if (e.key === "Delete" && selection.hasSelection) {
+    deleteSelectionContents();
+    return;
+  }
+
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (KEY_TOOL[k]) { deps.setTool(KEY_TOOL[k]); return; }
+  if (k === "x") { deps.swapColors(); return; }
+  if (k === "[") { state.brushSize = Math.max(1, state.brushSize - Math.max(1, Math.round(state.brushSize * 0.15))); deps.syncSlider(); return; }
+  if (k === "]") { state.brushSize = Math.min(200, state.brushSize + Math.max(1, Math.round(state.brushSize * 0.15))); deps.syncSlider(); return; }
+  if (e.key === "+" || e.key === "=") { setZoom(state.zoom * 1.25); return; }
+  if (e.key === "-") { setZoom(state.zoom / 1.25); return; }
+  if (e.key === "0") { setZoom(1); return; }
+  if (e.key === "1") { fitView(); return; }
+}
+
+function onKeyUp(e: KeyboardEvent): void {
+  if (e.key === "Alt") interaction.altKey = false;
+  if (e.key === " ") {
+    state.spacePan = false;
+    $("#stage").style.cursor = TOOLS[state.tool].cursor;
+  }
+}
