@@ -3,7 +3,7 @@
  * 複数のストア (doc / selection / history / filters) をまたぐ一連の手順を担う。
  */
 import { doc } from "./documentStore";
-import { filters } from "./filterEngine";
+import { filterPenFx, filters } from "./filterEngine";
 import { history } from "./historyStack";
 import { hooks } from "./hooks";
 import { selection } from "./selectionStore";
@@ -20,6 +20,9 @@ export function applyBaseImage(image: HTMLCanvasElement, name?: string): void {
   history.clear();
   filters.resetValues();
   filters.onDocResized();
+  // フィルターペン専用設定はツールオプション扱いで値は保持するが、
+  // ノイズキャッシュは実寸依存のためドキュメントサイズ変更時に無効化する
+  filterPenFx.onDocResized();
   doc.loadAsDocument(image, name);
   fitView();
   hooks.syncDocInfo();
@@ -37,6 +40,7 @@ export function resetDocument(): void {
   history.clear();
   filters.resetValues();
   filters.onDocResized();
+  filterPenFx.onDocResized();
   fitView();
   hooks.syncDocInfo();
   hooks.renderLayers();

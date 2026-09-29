@@ -73,7 +73,7 @@
             <button class="toolbtn" data-tool="burn" title="焼き込み (J) — ドラッグで暗く"><i data-icon="moon"></i></button>
           </div>
         </div>
-        <button class="toolbtn" data-tool="filter-pen" title="フィルターペン (F) — ドラッグでなぞった範囲にフィルター設定を適用"><i data-icon="sparkles"></i></button>
+        <button class="toolbtn" data-tool="filter-pen" title="フィルターペン (F) — ドラッグでなぞった範囲にフィルター効果を適用 (内容はツールタブで設定)"><i data-icon="sparkles"></i></button>
       </div>
       <span class="hrule"></span>
       <div class="toolgroup" role="group" aria-label="変形">
@@ -195,7 +195,68 @@
 
           <p class="fx-desc" data-show="bloat">ブラシ中心を基準に画像を球面状に変形します (リキフィの膨張 / 収縮)。「サイズ」= radius (影響範囲)、「強さ (膨張)」= strength (ピクセルの移動量) です。ピクセルはブラシ中心から<b>外側へ</b>移動するため、ある方向へ膨らませたいときはブラシをその逆側に置いてください。長押ししている間、その場で変形が持続します。選択範囲があればその内側のみに作用します。</p>
 
-          <p class="fx-desc" data-show="filter-pen">フィルタータブで有効にしたフィルターを、なぞった範囲に直接焼き込みます。1 ストローク内では効果が積み重ならず (開始時の画像を基準に置き換え)、選択範囲があればその内側のみに作用します。</p>
+          <p class="fx-desc" data-show="filter-pen">下の<b>フィルター効果</b> (このツール専用の設定) を、なぞった範囲に直接焼き込みます。1 ストローク内では効果が積み重ならず (開始時の画像を基準に置き換え)、選択範囲があればその内側のみに作用します。フィルタータブの設定とは<b>独立</b>しているため、ペン使用中も画像全体には影響しません。</p>
+
+          <div data-fx-scope="pen" data-show="filter-pen">
+            <div class="ctrl__label">フィルター効果 <span class="ctrl__sub">フィルターペン専用</span></div>
+            <div class="fx" data-fx="blur">
+              <div class="fx__row">
+                <span class="fx__name">ガウスぼかし</span>
+                <label class="switch"><input type="checkbox" data-fx-on="blur" /><span class="switch__track"></span></label>
+              </div>
+              <input type="range" data-fx-range="blur" min="0" max="10" step="0.5" value="0" />
+              <span class="fx__val mono" data-fx-val="blur">0.0 px</span>
+            </div>
+
+            <div class="fx" data-fx="noise">
+              <div class="fx__row">
+                <span class="fx__name">ノイズ</span>
+                <label class="switch"><input type="checkbox" data-fx-on="noise" /><span class="switch__track"></span></label>
+              </div>
+              <div class="seg seg--fx" role="group" aria-label="ノイズの種類">
+                <button class="seg__btn is-active" data-fx-noise-mode="color" title="カラーノイズ — RGB に独立したランダム値 (カラーグレイン)">カラー</button>
+                <button class="seg__btn" data-fx-noise-mode="gray" title="グレースケールノイズ — 明るさのみのランダム値 (フィルムグレイン)">グレー</button>
+              </div>
+              <input type="range" data-fx-range="noise" min="0" max="100" step="1" value="0" />
+              <span class="fx__val mono" data-fx-val="noise">0 %</span>
+            </div>
+
+            <div class="fx" data-fx="brightness">
+              <div class="fx__row">
+                <span class="fx__name">明るさ</span>
+                <label class="switch"><input type="checkbox" data-fx-on="brightness" /><span class="switch__track"></span></label>
+              </div>
+              <input type="range" data-fx-range="brightness" min="50" max="150" step="1" value="100" />
+              <span class="fx__val mono" data-fx-val="brightness">100 %</span>
+            </div>
+
+            <div class="fx" data-fx="contrast">
+              <div class="fx__row">
+                <span class="fx__name">コントラスト</span>
+                <label class="switch"><input type="checkbox" data-fx-on="contrast" /><span class="switch__track"></span></label>
+              </div>
+              <input type="range" data-fx-range="contrast" min="50" max="150" step="1" value="100" />
+              <span class="fx__val mono" data-fx-val="contrast">100 %</span>
+            </div>
+
+            <div class="fx" data-fx="saturate">
+              <div class="fx__row">
+                <span class="fx__name">彩度</span>
+                <label class="switch"><input type="checkbox" data-fx-on="saturate" /><span class="switch__track"></span></label>
+              </div>
+              <input type="range" data-fx-range="saturate" min="0" max="200" step="1" value="100" />
+              <span class="fx__val mono" data-fx-val="saturate">100 %</span>
+            </div>
+
+            <div class="fx" data-fx="hue">
+              <div class="fx__row">
+                <span class="fx__name">色相回転</span>
+                <label class="switch"><input type="checkbox" data-fx-on="hue" /><span class="switch__track"></span></label>
+              </div>
+              <input type="range" data-fx-range="hue" min="-180" max="180" step="1" value="0" />
+              <span class="fx__val mono" data-fx-val="hue">0°</span>
+            </div>
+          </div>
 
           <div class="ctrl" data-show="puppet-warp">
             <div class="ctrl__row">
@@ -237,10 +298,11 @@
         <section class="panel" id="panel-filter" role="tabpanel">
           <header class="panel__head panel__head--fx">
             <h2>前処理フィルター</h2>
-            <span class="panel__hint panel__hint--fx">背景に適用</span>
+            <span class="panel__hint panel__hint--fx">編集対象レイヤーに適用</span>
           </header>
-          <p class="fx-desc">元画像への前処理。合成画像に反映され、マスクには影響しません。<b>選択範囲がある場合はその範囲のみ適用されます。</b>「確定」で背景レイヤーに焼き込み(ベイク)、設定をリセットします。</p>
+          <p class="fx-desc">元画像への前処理。合成画像に反映され、マスクには影響しません。<b>選択範囲がある場合はその範囲のみ適用されます。</b>「確定」で編集対象レイヤーに焼き込み(ベイク)、設定をリセットします。<b>フィルターペン (ツールタブ) とは独立した設定です。</b></p>
 
+          <div data-fx-scope="image">
           <div class="fx" data-fx="blur">
             <div class="fx__row">
               <span class="fx__name">ガウスぼかし</span>
@@ -300,8 +362,9 @@
           </div>
 
           <div class="fx-actions">
-            <button class="btn btn--fx" id="btn-filter-apply" title="現在のフィルターを背景レイヤーに焼き込みます(選択範囲があればその範囲のみ)"><i data-icon="check"></i>確定</button>
+            <button class="btn btn--fx" id="btn-filter-apply" title="現在のフィルターを編集対象レイヤーに焼き込みます(選択範囲があればその範囲のみ)"><i data-icon="check"></i>確定</button>
             <button class="btn btn--ghost" id="btn-filter-reset" title="フィルター設定をすべて元に戻します"><i data-icon="x"></i>リセット</button>
+          </div>
           </div>
         </section>
 
@@ -334,7 +397,7 @@
     <div class="statusbar__group">
       <span class="mono st-zoom" id="st-zoom">100%</span>
       <span class="vdiv"></span>
-      <span class="mono st-ver">JSPaint v0.2.2 · TypeScript</span>
+      <span class="mono st-ver">JSPaint v0.2.3 · TypeScript</span>
     </div>
   </footer>
 

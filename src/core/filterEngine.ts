@@ -1,8 +1,11 @@
 /**
- * core/filterEngine.ts — Inpainting 前処理フィルター (編集対象レイヤーに適用)
- * フィルター設定の保持・CSS filter 文字列の生成・ノイズ (グレイン) の生成・
- * 編集対象レイヤーへのプレビュー表示・確定 (ベイク) を担う。
- * 適用先は「編集対象レイヤー」(アクティブ + Ctrl+クリックで追加した複数レイヤー)。
+ * core/filterEngine.ts — フィルター設定の保持と適用
+ * - FilterSettings: フィルターパラメータの保持と効果の生成 (CSS filter 文字列 / ノイズ)。
+ *   全体フィルター (FilterEngine) とフィルターペン専用設定 (filterPenFx) で共用する。
+ * - FilterEngine: 全体フィルター。編集対象レイヤーへのプレビュー表示と確定 (ベイク) を担う。
+ *   適用先は「編集対象レイヤー」(アクティブ + Ctrl+クリックで追加した複数レイヤー)。
+ *   フィルターペンは painting/filterPen.ts が filterPenFx を参照して独自に焼き込むため、
+ *   フィルタータブの設定 (プレビュー / ベイク) とは独立して動作する。
  */
 import { doc } from "./documentStore";
 import { history } from "./historyStack";
@@ -11,7 +14,7 @@ import { selection } from "./selectionStore";
 import { createCanvas } from "./canvasUtils";
 import type { Layer } from "./types";
 
-export class FilterEngine {
+export class FilterSettings {
   blur = 0;
   noise = 0;
   /** ノイズの種類: "color" = RGB独立ランダム / "gray" = 明るさのみのグレイン */
@@ -49,6 +52,62 @@ export class FilterEngine {
     this.hue = 0;
   }
 
+  /** ノイズ(グレイン) — シード固定の決定論的パターンをキャッシュして再利用 (カラー / グレー) */
+  drawNoise(g: CanvasRenderingContext2D): void {
+    const strength = this.noise / 100;
+    if (strength <= 0) return;
+    g.save();
+    g.globalAlpha = strength;
+    g.drawImage(this.getNoiseCanvas(this.noiseMode), 0, 0);
+    g.restore();
+  }
+
+  /** ドキュメントサイズ変更後に呼ぶ (画像読み込み時)。ノイズキャッシュは実寸依存のため無効化する */
+  onDocResized(): void {
+    this.noiseCaches = { color: null, gray: null };
+  }
+
+  private noiseCaches: Record<"color" | "gray", HTMLCanvasElement | null> = { color: null, gray: null };
+
+  private getNoiseCanvas(mode: "color" | "gray"): HTMLCanvasElement {
+    const cached = this.noiseCaches[mode];
+    if (cached) return cached;
+    const n = document.createElement("canvas");
+    n.width = doc.width;
+    n.height = doc.height;
+    const nc = n.getContext("2d")!;
+    const img = nc.createImageData(doc.width, doc.height);
+    let s = 0x9e3779b9; // xorshift32 固定シード
+    const rand = (): number => {
+      s ^= s << 13;
+      s ^= s >>> 17;
+      s ^= s << 5;
+      return (s >>> 0) / 4294967296;
+    };
+    for (let i = 0; i < img.data.length; i += 4) {
+      if (mode === "gray") {
+        // グレースケールノイズ: 明るさのみのランダム値 (フィルムグレイン)
+        const v = rand() * 255;
+        img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+      } else {
+        // カラーノイズ: RGB に独立したランダム値 (カラーグレイン)
+        img.data[i] = rand() * 255;
+        img.data[i + 1] = rand() * 255;
+        img.data[i + 2] = rand() * 255;
+      }
+      img.data[i + 3] = 255;
+    }
+    nc.putImageData(img, 0, 0);
+    this.noiseCaches[mode] = n;
+    return n;
+  }
+}
+
+/**
+ * FilterEngine — 全体フィルター (フィルタータブ)。
+ * 編集対象レイヤーへのプレビュー表示と確定 (ベイク) を担う。
+ */
+export class FilterEngine extends FilterSettings {
   /**
    * レイヤーの表示用プレビューを返す。
    * 編集対象レイヤーでフィルターが有効な場合、フィルター適用済み
@@ -130,56 +189,6 @@ export class FilterEngine {
     );
   }
 
-  /** ノイズ(グレイン) — シード固定の決定論的パターンをキャッシュして再利用 (カラー / グレー) */
-  drawNoise(g: CanvasRenderingContext2D): void {
-    const strength = this.noise / 100;
-    if (strength <= 0) return;
-    g.save();
-    g.globalAlpha = strength;
-    g.drawImage(this.getNoiseCanvas(this.noiseMode), 0, 0);
-    g.restore();
-  }
-
-  private noiseCaches: Record<"color" | "gray", HTMLCanvasElement | null> = { color: null, gray: null };
-
-  private getNoiseCanvas(mode: "color" | "gray"): HTMLCanvasElement {
-    const cached = this.noiseCaches[mode];
-    if (cached) return cached;
-    const n = document.createElement("canvas");
-    n.width = doc.width;
-    n.height = doc.height;
-    const nc = n.getContext("2d")!;
-    const img = nc.createImageData(doc.width, doc.height);
-    let s = 0x9e3779b9; // xorshift32 固定シード
-    const rand = (): number => {
-      s ^= s << 13;
-      s ^= s >>> 17;
-      s ^= s << 5;
-      return (s >>> 0) / 4294967296;
-    };
-    for (let i = 0; i < img.data.length; i += 4) {
-      if (mode === "gray") {
-        // グレースケールノイズ: 明るさのみのランダム値 (フィルムグレイン)
-        const v = rand() * 255;
-        img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
-      } else {
-        // カラーノイズ: RGB に独立したランダム値 (カラーグレイン)
-        img.data[i] = rand() * 255;
-        img.data[i + 1] = rand() * 255;
-        img.data[i + 2] = rand() * 255;
-      }
-      img.data[i + 3] = 255;
-    }
-    nc.putImageData(img, 0, 0);
-    this.noiseCaches[mode] = n;
-    return n;
-  }
-
-  /** ドキュメントサイズ変更後に呼ぶ (画像読み込み時)。ノイズキャッシュは実寸依存のため無効化する */
-  onDocResized(): void {
-    this.noiseCaches = { color: null, gray: null };
-  }
-
   /** プレビュー用の一時canvas (フィルター適用済み表示) をドキュメント実寸へ合わせて返す */
   private ensureTmp(): CanvasRenderingContext2D {
     if (this.fxTmp.width !== doc.width) this.fxTmp.width = doc.width;
@@ -199,5 +208,8 @@ export class FilterEngine {
   private readonly fxTmp2 = document.createElement("canvas");
 }
 
-/** アプリ全体で共有するフィルターエンジン */
+/** アプリ全体で共有するフィルターエンジン (フィルタータブ = 画像全体への適用) */
 export const filters = new FilterEngine();
+
+/** フィルターペン専用のフィルター設定 (フィルタータブとは独立。ツールタブで編集する) */
+export const filterPenFx = new FilterSettings();

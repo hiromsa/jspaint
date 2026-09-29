@@ -5,7 +5,7 @@
 import { floodMask, tintMask } from "../core/canvasUtils";
 import { doc } from "../core/documentStore";
 import { history } from "../core/historyStack";
-import { filters } from "../core/filterEngine";
+import { filterPenFx } from "../core/filterEngine";
 import { interaction } from "../core/interactionState";
 import { selection } from "../core/selectionStore";
 import { state } from "../core/editorState";
@@ -77,8 +77,8 @@ function onPointerDown(e: PointerEvent): void {
       break;
     }
     case "filter-pen": {
-      if (!filters.filtersActive()) {
-        toast("先にフィルタータブでフィルターを有効にしてください", "info");
+      if (!filterPenFx.filtersActive()) {
+        toast("先にツールタブで「フィルター効果」を有効にしてください", "info");
         break;
       }
       history.pushUndo();

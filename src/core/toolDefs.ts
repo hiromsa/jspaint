@@ -13,7 +13,7 @@ export const TOOLS: Record<ToolId, { label: string; key: string; guide: string; 
   "puppet-warp": { label: "パペットワープ", key: "T", guide: "クリック=ピンを打つ (Alt=固定ピン) · ピンをドラッグ=変形 · ダブルクリック=ピン削除 · Enter=確定 / Esc=取消 · 選択範囲があればその範囲のみ", cursor: "crosshair" },
   dodge:       { label: "覆い焼き",     key: "D", guide: "ドラッグで明るく · Alt で焼き込みに反転", cursor: "none" },
   burn:        { label: "焼き込み",     key: "J", guide: "ドラッグで暗く · Alt で覆い焼きに反転", cursor: "none" },
-  "filter-pen": { label: "フィルターペン", key: "F", guide: "ドラッグでなぞった範囲にフィルター設定を焼き込む · フィルタータブで内容を設定", cursor: "none" },
+  "filter-pen": { label: "フィルターペン", key: "F", guide: "ドラッグでなぞった範囲にフィルター効果を焼き込む · ツールタブで内容を設定", cursor: "none" },
   line:        { label: "直線",         key: "L", guide: "ドラッグで直線 · Shift で水平 / 垂直 / 45°", cursor: "crosshair" },
   rect:        { label: "矩形",         key: "U", guide: "ドラッグで矩形 · Shift で正方形", cursor: "crosshair" },
   ellipse:     { label: "円",           key: "O", guide: "ドラッグで楕円 · Shift で正円", cursor: "crosshair" },

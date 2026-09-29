@@ -34,8 +34,10 @@ src/
                      resetDocument: 読み込み直後の状態へ戻す)
     selectionStore.ts 選択マスク・Marching Ants の管理 (selection) ※ resizeTo でドキュメント実寸に追従
     historyStack.ts  Undo / Redo (スナップショット方式・40ステップ) (history)
-    filterEngine.ts  前処理フィルターの状態・**編集対象レイヤーへのプレビュー (layerPreview)・ベイク** (filters)
-                     ※ onDocResized でキャッシュ無効化
+    filterEngine.ts  フィルター設定の保持と適用。基底クラス FilterSettings (パラメータ保持 + CSS filter 文字列生成 + ノイズ生成) を
+                     全体フィルター FilterEngine (**編集対象レイヤーへのプレビュー layerPreview・ベイク**, filters) と
+                     フィルターペン専用設定 filterPenFx で共用
+                     ※ onDocResized でノイズキャッシュ (実寸依存) を無効化
     selectionOps.ts  選択範囲への編集操作 (全選択 / 塗りつぶし / 消去 / 解除)
     viewState.ts     ビューポート・ズーム / パン・screen⇔doc 変換 (viewport)
     hooks.ts         UI へのコールバック窓口 (hooks / setHooks)
@@ -44,7 +46,7 @@ src/
     stroke.ts        ストローク共通 (paintStroke + 選択範囲クリップ合成)
     retouch.ts       指先 / 覆い焼き / 焼き込み
     bloat.ts         膨張ブラシ (逆マッピング + rAF ホールドループ)
-    filterPen.ts     フィルターペン
+    filterPen.ts     フィルターペン (専用設定 filterPenFx をなぞった範囲に焼き込む — フィルタータブとは独立)
 
   puppet/            パペットワープ (メッシュ自由変形) の実装
     delaunay.ts      Bowyer-Watson 法による Delaunay 三角分割 (外部依存ゼロ)
@@ -71,7 +73,7 @@ src/
                      / 「クリップボードから新規作成」ボタン)
     panels.ts        ツールボックス・パラメータ・カラー・タブ
     layersPanel.ts   レイヤーパネル (ロック切替 / 表示・非表示 / 編集対象バッジ)
-    filtersPanel.ts  フィルタータブ
+    filtersPanel.ts  フィルター設定 UI (data-fx-scope コンテナ単位でフィルタータブ / ツールタブのペン用を共通実装で bind・sync)
     exportModal.ts   ヘッダー操作 + Export モーダル (postMessage 連携) + キャンセル (初期状態へ復元)
 ```
 
@@ -174,10 +176,25 @@ pointerup   → 後始末 → render()
 - **パペットワープのセッション分離** (`puppet/warpSession.ts`): 開始時に編集対象レイヤーの
   スナップショットを取り、プレビューはスナップショット上でのみ計算する。レイヤーの実ピクセルは
   commit (Enter / ツール切替時の自動確定) まで一切変更しないため、Undo エントリは確定時 1 回のみ。
+- **フィルターペンの設定は全体フィルターと独立** (v0.2.3): 従来はフィルターペンがフィルタータブ
+  (FilterEngine) の状態を共用していたため、「ペンだけ使いたいのにフィルターを ON にした瞬間に
+  画像全体へプレビューがかかる / 確定 (ベイク) と干渉する」問題があった。
+  - `FilterSettings` 基底クラス (パラメータ保持 + CSS filter 文字列 + ノイズ生成) を新設し、
+    全体フィルター `FilterEngine` (プレビュー / ベイク) とフィルターペン専用 `filterPenFx`
+    (焼き込み) で共用。効果生成ロジックは一元化される。
+  - UI は `data-fx-scope` 属性を持つコンテナ単位で共通実装 (`ui/filtersPanel.ts` の
+    `bindFxScope` / `syncFxScope`) により bind・sync する。フィルタータブ = `image`、
+    ツールタブのペン用 = `pen` (data-show="filter-pen" で選択時のみ表示)。UI の二重実装はなし。
+  - ペン設定はドキュメント差し替え時も値を保持する (ツールオプション扱い)。
+    ノイズキャッシュのみ実寸依存のため `filterPenFx.onDocResized()` で無効化する。
+  - ペン設定がすべて無効のときのストロークは toast で「ツールタブで有効化」を案内する。
 
 ## 6. 検証スクリプト
 
-- `npm run test:puppet` — パペットワープの pure ロジック (Delaunay / メッシュ / MLS) を node で単体検証 (22 ケース)。
-- `npm run test:imageio` — 画像入出力とホストモードをヘッドレス Chrome / Edge で E2E 検証 (19 ケース相当)。
+- `npm run test:puppet` — パペットワープの pure ロジック (Delaunay / メッシュ / MLS) を node で単体検証 (25 ケース)。
+- `npm run test:imageio` — 画像入出力とホストモードをヘッドレス Chrome / Edge で E2E 検証 (27 ケース相当)。
   - 事前に `npm run build` が必要。puppeteer-core (devDependencies) を使用し、
     インストール済みブラウザの実行ファイルを自動検出する (追加ダウンロード不要)。
+- `npm run test:filterpen` — フィルターペン専用設定 (ツールタブ) の E2E 検証 (10 ケース相当)。
+  フィルタータブとの独立性 / ペン有効化で画像全体が変わらないこと / なぞった範囲のみ焼き込まれること /
+  全体フィルターの従来動作 (プレビュー / 非破壊) / 無効時の案内トーストを検証する。

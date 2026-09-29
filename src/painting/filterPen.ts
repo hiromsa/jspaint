@@ -1,11 +1,12 @@
 /**
  * painting/filterPen.ts — フィルターペン (なぞった範囲にフィルターを焼き込む)
- * フィルタータブで有効中のフィルターを、ペンでなぞった範囲のピクセルへ直接適用する。
+ * フィルターペン専用のフィルター設定 (filterPenFx・ツールタブで編集) を、
+ * ペンでなぞった範囲のピクセルへ直接適用する。
  * 1ストローク内は開始時の画像を基準にするため、重ね塗りしてもフィルターが二重に効かない。
  */
 import { clone } from "../core/canvasUtils";
 import { doc } from "../core/documentStore";
-import { filters } from "../core/filterEngine";
+import { filterPenFx } from "../core/filterEngine";
 import { selection } from "../core/selectionStore";
 import { state } from "../core/editorState";
 import { drawLineSeg, ensureStrokeTmp, getStrokeTmp, strokeTmpCtx } from "./stroke";
@@ -47,7 +48,7 @@ export function applyFilterPenSegment(from: Pt, to: Pt): void {
   const targets = doc.editTargets();
   if (!targets.length) return;
   // ぼかしのはみ出し分 (blur radius) も bbox に含める
-  const blurPad = filters.on.blur && filters.blur > 0 ? filters.blur : 0;
+  const blurPad = filterPenFx.on.blur && filterPenFx.blur > 0 ? filterPenFx.blur : 0;
   const pad = state.brushSize / 2 + 2 + blurPad;
   const bx = Math.max(0, Math.floor(Math.min(from.x, to.x) - pad));
   const by = Math.max(0, Math.floor(Math.min(from.y, to.y) - pad));
@@ -76,10 +77,10 @@ export function applyFilterPenSegment(from: Pt, to: Pt): void {
     tg.translate(-bx, -by);
     tg.globalCompositeOperation = "source-over";
     tg.clearRect(bx, by, bw, bh);
-    tg.filter = filters.filterString();
+    tg.filter = filterPenFx.filterString();
     tg.drawImage(base, 0, 0);
     tg.filter = "none";
-    if (filters.on.noise && filters.noise > 0) filters.drawNoise(tg);
+    if (filterPenFx.on.noise && filterPenFx.noise > 0) filterPenFx.drawNoise(tg);
     tg.globalCompositeOperation = "destination-in";
     if (selection.hasSelection) {
       tg.drawImage(selection.mask, 0, 0);
