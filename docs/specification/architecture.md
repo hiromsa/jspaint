@@ -38,9 +38,17 @@ src/
     bloat.ts         膨張ブラシ (逆マッピング + rAF ホールドループ)
     filterPen.ts     フィルターペン
 
+  puppet/            パペットワープ (メッシュ自由変形) の実装
+    delaunay.ts      Bowyer-Watson 法による Delaunay 三角分割 (外部依存ゼロ)
+    mesh.ts          メッシュ生成 (不透明領域 × 選択範囲 → グリッド + 輪郭点 → 三角分割) と
+                     PuppetPin / PuppetMesh 型 (canvas 非依存・単体検証可)
+    deformer.ts      MLS (Moving Least Squares) rigid 変形 — ピン移動から全頂点の変形先を計算
+    warpPaint.ts     三角形クリップ + アフィン変換で元画像を転写 (シーム防止パッド付き)
+    warpSession.ts   セッション管理 (開始 / ピン操作 / プレビュー / commit・cancel / Undo 統合)
+
   rendering/         キャンバスへの描画
     renderer.ts      view canvas の管理と render() 本体
-    previews.ts      オーバーレイ (プレビュー / サイズバッジ / 円形カーソル)
+    previews.ts      オーバーレイ (プレビュー / メッシュ・ピン / サイズバッジ / 円形カーソル)
 
   interaction/       入力処理
     pointer.ts       ポインタイベントのツール別ディスパッチ / パン / ホイール
@@ -59,12 +67,16 @@ src/
 
 ```
 main.ts → app.ts ─┬→ ui/ ──────┐
-                  ├→ interaction/ ──→ painting/ ──→ core/
-                  ├→ rendering/ ────┘                │
-                  └→ core/ ──────────────────────────┘
+                  ├→ interaction/ ──→ painting/ ─┐
+                  ├→ rendering/ ────┘            ├→ core/
+                  ├→ puppet/ ────────────────────┘
+                  └→ core/ ──────────────────────┘
 ```
 
 - **core は ui / rendering / interaction に依存しない** (DOM を触らない)。
+- **puppet/ は painting/ 同等のドメイン層**。interaction / rendering / ui から参照され、core へ依存する。
+  mesh.ts / delaunay.ts / deformer.ts は canvas 非依存の純粋ロジック (`scripts/verify-puppet.ts` を
+  `npm run test:puppet` で単体検証できる)。
 - core から UI 更新 (render / toast / パネル同期) を依頼する場合は **hooks** (`core/hooks.ts`) 経由。
   実装は `app.ts` の `startApp()` で `setHooks()` により差し込む (既定は no-op)。
 - 依存は上の層から下の層へ一方向。循環 import は存在しない
@@ -107,3 +119,11 @@ pointerup   → 後始末 → render()
   合成画像を引数で受け取る純粋関数にし、core/canvasUtils から documentStore への依存を切断。
 - **style.css は分割しない**: 単一HTMLビルド (vite-plugin-singlefile) では分割の恩恵が小さく、
   ui.md スタイルガイドとの対応が分かりにくくなるため現状維持。
+- **パペットワープは外部依存ゼロ** (v0.1.6): Delaunay 分割は Bowyer-Watson 法を自前実装
+  (`puppet/delaunay.ts`)。頂点数は数百規模でセッション開始時 1 回のみ実行のため素朴な実装で十分。
+  変形計算は MLS rigid (加重 2D Procrustes の解析解: θ = atan2(Σw·(P̂×Q̂), Σw·(P̂·Q̂))、
+  f(v) = q* + R·(v − p*))。レンダリングは三角形ごとの「クリップ + アフィン変換」転写で、
+  クリップパスを 0.5px 膨張して三角形境界のシームを防止。
+- **パペットワープのセッション分離** (`puppet/warpSession.ts`): 開始時に編集対象レイヤーの
+  スナップショットを取り、プレビューはスナップショット上でのみ計算する。レイヤーの実ピクセルは
+  commit (Enter / ツール切替時の自動確定) まで一切変更しないため、Undo エントリは確定時 1 回のみ。
