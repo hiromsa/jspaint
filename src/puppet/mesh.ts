@@ -114,3 +114,30 @@ export function buildMesh(contains: MeshRegion, spacing: number): PuppetMesh | n
     pins: [],
   };
 }
+
+/**
+ * 変形後空間 (画面上) の点を、初期 (変形前) 空間の対応点へ逆変換する。
+ * pos を含む変形後三角形 (deformed) の重心座標を初期頂点 (vertices) へ適用する。
+ * どの三角形にも含まれない (メッシュ外) 場合は pos と同じ座標を返す。
+ * 変形済みの状態でピンを打つとき、「見た目の位置」を初期空間の座標へ写すために使う。
+ */
+export function inverseDeformPoint(mesh: PuppetMesh, deformed: readonly Pt[], pos: Pt): Pt {
+  for (const { indices } of mesh.triangles) {
+    const [i0, i1, i2] = indices;
+    const a = deformed[i0];
+    const b = deformed[i1];
+    const c = deformed[i2];
+    const den = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y);
+    if (Math.abs(den) < 1e-9) continue; // 退化三角形
+    const l0 = ((b.y - c.y) * (pos.x - c.x) + (c.x - b.x) * (pos.y - c.y)) / den;
+    const l1 = ((c.y - a.y) * (pos.x - c.x) + (a.x - c.x) * (pos.y - c.y)) / den;
+    const l2 = 1 - l0 - l1;
+    if (l0 < -1e-6 || l1 < -1e-6 || l2 < -1e-6) continue; // 三角形の外
+    const v = mesh.vertices;
+    return {
+      x: l0 * v[i0].x + l1 * v[i1].x + l2 * v[i2].x,
+      y: l0 * v[i0].y + l1 * v[i1].y + l2 * v[i2].y,
+    };
+  }
+  return { x: pos.x, y: pos.y };
+}

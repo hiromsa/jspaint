@@ -4,7 +4,7 @@
  * canvas 非依存のため、esbuild でバンドルして node 上で直接実行する。
  */
 import { triangulate } from "../src/puppet/delaunay";
-import { buildMesh, regionBounds } from "../src/puppet/mesh";
+import { buildMesh, inverseDeformPoint, regionBounds } from "../src/puppet/mesh";
 import { computeDeformedVertices } from "../src/puppet/deformer";
 import type { Pt } from "../src/core/types";
 
@@ -136,6 +136,41 @@ const near = (a: number, b: number, eps = 1e-4): boolean => Math.abs(a - b) <= e
   const anchorDrift = Math.hypot(out[0].x - 10, out[0].y - 10);
   check("MLS: 未移動ピン上の頂点はほぼ不動 (<5px)", anchorDrift < 5, `drift ${anchorDrift.toFixed(3)}`);
   check("MLS: 移動ピン側の頂点は右 (+x) へ引っ張られる", out[1].x > 110, `got (${out[1].x.toFixed(1)}, ${out[1].y.toFixed(1)})`);
+}
+
+/* --- 10. 逆変換 (変形後空間 → 初期空間): 変形済み状態でのピン打ち --- */
+{
+  const contains = (x: number, y: number): boolean => x >= 100 && x < 200 && y >= 80 && y < 180;
+  const mesh = buildMesh(contains, 32);
+  if (!mesh) throw new Error("buildMesh failed");
+  const identity = computeDeformedVertices(mesh);
+  const p = inverseDeformPoint(mesh, identity, { x: 150, y: 120 });
+  check("逆変換: 恒等変形では元の座標に戻る", near(p.x, 150, 1e-6) && near(p.y, 120, 1e-6), `got (${p.x}, ${p.y})`);
+
+  // 1 ピン平行移動 (+20,+20) — 変形は正確な平行移動 (テスト7で検証済み)
+  mesh.pins.push({ id: 1, original: { x: 150, y: 130 }, current: { x: 170, y: 150 }, isPinned: false });
+  const shifted = computeDeformedVertices(mesh);
+  const q = inverseDeformPoint(mesh, shifted, { x: 160, y: 130 });
+  check("逆変換: (+20,+20) 平行移動を打ち消す", near(q.x, 140, 0.5) && near(q.y, 110, 0.5), `got (${q.x.toFixed(2)}, ${q.y.toFixed(2)})`);
+
+  // 【核心】変形後空間にピンを打っても既存変形がほぼ変わらないこと (original = 逆変換結果)
+  const before = computeDeformedVertices(mesh);
+  mesh.pins.push({
+    id: 2,
+    original: inverseDeformPoint(mesh, before, { x: 120, y: 100 }),
+    current: { x: 120, y: 100 },
+    isPinned: true,
+  });
+  const after = computeDeformedVertices(mesh);
+  let maxDrift = 0;
+  for (let i = 0; i < before.length; i++) {
+    maxDrift = Math.max(maxDrift, Math.hypot(after[i].x - before[i].x, after[i].y - before[i].y));
+  }
+  check("逆変換: 変形後空間に打った固定ピンで変形がほぼ不変 (<1px)", maxDrift < 1, `maxDrift ${maxDrift.toFixed(4)}`);
+
+  // メッシュ外の点は入力をそのまま返す
+  const outside = inverseDeformPoint(mesh, shifted, { x: 10, y: 10 });
+  check("逆変換: メッシュ外は入力と同じ座標を返す", outside.x === 10 && outside.y === 10);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

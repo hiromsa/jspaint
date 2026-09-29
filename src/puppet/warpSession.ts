@@ -12,7 +12,7 @@ import { history } from "../core/historyStack";
 import { selection } from "../core/selectionStore";
 import { DOC_H, DOC_W, type Pt, type ToolId } from "../core/types";
 import { computeDeformedVertices } from "./deformer";
-import { buildMesh, type PuppetMesh, type PuppetPin } from "./mesh";
+import { buildMesh, inverseDeformPoint, type PuppetMesh, type PuppetPin } from "./mesh";
 import { renderWarped } from "./warpPaint";
 
 /** ピンのヒット判定半径 (画面 px。ドキュメント座標へは zoom で割って使う) */
@@ -114,9 +114,14 @@ class PuppetWarpSession {
 
   /** ピンを追加する (fixed = 固定ピン)。移動ピンはそのままドラッグ対象になる */
   addPin(pos: Pt, fixed: boolean): PuppetPin {
+    // 変形済みでも「見た目の位置」に打てるよう、original は初期空間へ逆変換する。
+    // original と current は既存変形で対応するペアになるため、ピン追加だけでは画像が動かない
+    const origin = this.mesh
+      ? inverseDeformPoint(this.mesh, this.deformed, pos)
+      : { x: pos.x, y: pos.y };
     const pin: PuppetPin = {
       id: this.nextPinId++,
-      original: { x: pos.x, y: pos.y },
+      original: origin,
       current: { x: pos.x, y: pos.y },
       isPinned: fixed,
     };
