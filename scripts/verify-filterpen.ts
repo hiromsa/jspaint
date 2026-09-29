@@ -168,6 +168,13 @@ async function main(): Promise<void> {
     await new Promise((r) => setTimeout(r, 150));
     const toast = await lastToast(page);
     ok("フィルター効果が無効なときはツールタブでの有効化を案内する", toast.includes("ツールタブ"), `toast="${toast}"`);
+
+    /* --- 5) フィルター効果セクションの表示はフィルターペン選択時に限る --- */
+    await page.click('[data-tool="brush"]');
+    await new Promise((r) => setTimeout(r, 150));
+    ok("他のツール選択時はフィルター効果セクションを非表示にする", await page.evaluate(() =>
+      (document.querySelector('[data-fx-scope="pen"]') as HTMLElement).classList.contains("is-hidden") === true,
+    ));
   } finally {
     await browser.close();
   }
