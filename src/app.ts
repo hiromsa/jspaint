@@ -11,7 +11,15 @@ import { DOC_H, DOC_W } from "./core/types";
 import type { Layer, SelMode, ToolId } from "./core/types";
 import { state } from "./core/editorState";
 import { CIRCLE_CURSOR_TOOLS, KEY_TOOL, PAINT_TOOLS, TOOLS, TOOL_ICON } from "./core/toolDefs";
-import { clone, hexA, roundRectPath, tintMask } from "./core/canvasUtils";
+import { clone, floodMask, hexA, roundRectPath, tintMask } from "./core/canvasUtils";
+import { doc } from "./core/documentStore";
+import { selection } from "./core/selectionStore";
+import { history } from "./core/historyStack";
+import { filters } from "./core/filterEngine";
+import { setHooks } from "./core/hooks";
+import { interaction } from "./core/interactionState";
+import { docToScreenX, docToScreenY, fitView, screenToDoc, setZoom, viewport } from "./core/viewState";
+import { deleteSelectionContents, deselect, fillSelection, selectAll } from "./core/selectionOps";
 import { $, $$ } from "./ui/dom";
 import { markDirty, toast } from "./ui/feedback";
 
@@ -21,218 +29,12 @@ const vctx = view.getContext("2d")!;
 const stage = $("#stage");
 const workspace = $("#workspace");
 
-let layers: Layer[] = [];
-let nextLayerId = 1;
-let activeLayerId = 2;
-/** 編集対象レイヤー (描画 / レタッチ系ツールが作用する対象)。常に activeLayerId を含む */
-let editTargetIds = new Set<number>();
-
-/* ============ 選択 (Marching Ants) ============ */
-const selMask = document.createElement("canvas");
-selMask.width = DOC_W;
-selMask.height = DOC_H;
-const selCtx = selMask.getContext("2d")!;
-let hasSelection = false;
-let antsBlack!: HTMLCanvasElement;
-const antsWhite: HTMLCanvasElement[] = [];
-let antPhase = 0;
-
-const activeLayer = () => layers.find((l) => l.id === activeLayerId)!;
-
-/** 編集対象レイヤー一覧 (activeLayer を必ず含む。layers の並び順) */
-function editTargets(): Layer[] {
-  const ids = new Set(editTargetIds);
-  ids.add(activeLayerId);
-  return layers.filter((l) => ids.has(l.id));
-}
-
-function makeLayer(name: string, kind: "base" | "paint", image?: HTMLCanvasElement): Layer {
-  const canvas = document.createElement("canvas");
-  canvas.width = DOC_W;
-  canvas.height = DOC_H;
-  // レタッチ系ツール (覆い焼き/焼き込み) は getImageData を頻用するため CPU 側バッファを優先
-  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-  if (image) ctx.drawImage(image, 0, 0);
-  return { id: nextLayerId++, name, kind, canvas, ctx, visible: true };
-}
-
-/* ============ Undo / Redo ============ */
-/** 1レイヤー分のスナップショット (複数レイヤー編集対象に対応) */
-interface LayerSnap {
-  layerId: number;
-  layer: HTMLCanvasElement;
-}
-interface Snap {
-  layers: LayerSnap[];
-  sel: HTMLCanvasElement;
-  hasSel: boolean;
-}
-const undoStack: Snap[] = [];
-const redoStack: Snap[] = [];
-
-/** Undo 対象レイヤーのスナップショットを積む。未指定時は現在の編集対象レイヤーすべて */
-function pushUndo(target?: Layer | Layer[]): void {
-  const list = target ? (Array.isArray(target) ? target : [target]) : editTargets();
-  undoStack.push({
-    layers: list.map((l) => ({ layerId: l.id, layer: clone(l.canvas) })),
-    sel: clone(selMask),
-    hasSel: hasSelection,
-  });
-  if (undoStack.length > 40) undoStack.shift();
-  redoStack.length = 0;
-  updateUndoButtons();
-}
-
-/** 反対スタックへ積む「現在状態」のスナップショット (pop したスナップショットと同じレイヤー集合) */
-function snapCurrent(layerIds: number[]): LayerSnap[] {
-  return layerIds
-    .map((id) => layers.find((l) => l.id === id))
-    .filter((l): l is Layer => Boolean(l))
-    .map((l) => ({ layerId: l.id, layer: clone(l.canvas) }));
-}
-
-/** スナップショットをレイヤー / 選択状態へ復元 */
-function restoreSnap(s: Snap): void {
-  for (const { layerId, layer } of s.layers) {
-    const t = layers.find((x) => x.id === layerId);
-    if (t) {
-      t.ctx.clearRect(0, 0, DOC_W, DOC_H);
-      t.ctx.drawImage(layer, 0, 0);
-    }
-  }
-  selCtx.clearRect(0, 0, DOC_W, DOC_H);
-  if (s.hasSel) selCtx.drawImage(s.sel, 0, 0);
-  hasSelection = s.hasSel;
-  rebuildAnts();
-  syncToolGuide();
-  renderLayers();
-  updateUndoButtons();
-}
-
-function undo(): void {
-  const s = undoStack.pop();
-  if (!s) return;
-  redoStack.push({ layers: snapCurrent(s.layers.map((x) => x.layerId)), sel: clone(selMask), hasSel: hasSelection });
-  restoreSnap(s);
-}
-
-function redo(): void {
-  const s = redoStack.pop();
-  if (!s) return;
-  undoStack.push({ layers: snapCurrent(s.layers.map((x) => x.layerId)), sel: clone(selMask), hasSel: hasSelection });
-  restoreSnap(s);
-}
-
 function updateUndoButtons(): void {
-  ($("#btn-undo") as HTMLButtonElement).disabled = undoStack.length === 0;
-  ($("#btn-redo") as HTMLButtonElement).disabled = redoStack.length === 0;
+  ($("#btn-undo") as HTMLButtonElement).disabled = !history.canUndo;
+  ($("#btn-redo") as HTMLButtonElement).disabled = !history.canRedo;
 }
 
-/* ============ 前処理フィルター (背景レイヤーに適用) ============ */
-const filters = {
-  blur: 0,
-  noise: 0,
-  /** ノイズの種類: "color" = RGB独立ランダム / "gray" = 明るさのみのグレイン */
-  noiseMode: "color" as "color" | "gray",
-  brightness: 100,
-  contrast: 100,
-  saturate: 100,
-  hue: 0,
-  on: { blur: false, noise: false, brightness: false, contrast: false, saturate: false, hue: false } as Record<string, boolean>,
-};
-
-function filterString(): string {
-  const parts: string[] = [];
-  if (filters.on.blur && filters.blur > 0) parts.push(`blur(${filters.blur}px)`);
-  if (filters.on.brightness) parts.push(`brightness(${filters.brightness}%)`);
-  if (filters.on.contrast) parts.push(`contrast(${filters.contrast}%)`);
-  if (filters.on.saturate) parts.push(`saturate(${filters.saturate}%)`);
-  if (filters.on.hue) parts.push(`hue-rotate(${filters.hue}deg)`);
-  return parts.length ? parts.join(" ") : "none";
-}
-
-function filtersActive(): boolean {
-  return Object.values(filters.on).some(Boolean);
-}
-
-/** フィルター適用作業用の一時canvas */
-const fxTmp = document.createElement("canvas");
-fxTmp.width = DOC_W;
-fxTmp.height = DOC_H;
-
-/**
- * 背景レイヤー(元画像)を描画する。
- * フィルター有効時、選択範囲があれば「その範囲のみ」にフィルターを適用する。
- */
-function drawBaseLayer(g: CanvasRenderingContext2D): void {
-  const base = layers.find((l) => l.kind === "base");
-  if (!base?.visible) return;
-  if (!filtersActive()) {
-    g.drawImage(base.canvas, 0, 0);
-    return;
-  }
-  // 1) フィルター適用版を全面に描く
-  g.filter = filterString();
-  g.drawImage(base.canvas, 0, 0);
-  if (filters.on.noise && filters.noise > 0) drawNoise(g);
-  g.filter = "none";
-  // 2) 選択範囲の外側を「フィルターなし」で上書き
-  if (hasSelection) {
-    const tg = fxTmp.getContext("2d")!;
-    tg.globalCompositeOperation = "source-over";
-    tg.clearRect(0, 0, DOC_W, DOC_H);
-    tg.drawImage(base.canvas, 0, 0);
-    tg.globalCompositeOperation = "destination-out";
-    tg.drawImage(selMask, 0, 0);
-    tg.globalCompositeOperation = "source-over";
-    g.drawImage(fxTmp, 0, 0);
-  }
-}
-
-/* ============ 座標変換 / ズーム ============ */
-let vw = 0;
-let vh = 0;
-const dpr = Math.min(window.devicePixelRatio || 1, 2);
-
-/**
- * 画面(CSS px)⇔ドキュメント座標の相互変換。
- * render() と同じ「ドキュメント中心基準」の写像を使うこと(ズレ防止)。
- *   screen = vw/2 + pan + (doc − DOC中心) × zoom
- */
-function screenToDoc(sx: number, sy: number): { x: number; y: number } {
-  return {
-    x: (sx - vw / 2 - state.panX) / state.zoom + DOC_W / 2,
-    y: (sy - vh / 2 - state.panY) / state.zoom + DOC_H / 2,
-  };
-}
-function docToScreenX(dx: number): number {
-  return vw / 2 + state.panX + (dx - DOC_W / 2) * state.zoom;
-}
-function docToScreenY(dy: number): number {
-  return vh / 2 + state.panY + (dy - DOC_H / 2) * state.zoom;
-}
-
-function setZoom(z: number, cx?: number, cy?: number): void {
-  const nz = Math.min(8, Math.max(0.05, z));
-  const px = cx ?? vw / 2;
-  const py = cy ?? vh / 2;
-  const dx = (px - vw / 2 - state.panX) / state.zoom;
-  const dy = (py - vh / 2 - state.panY) / state.zoom;
-  state.zoom = nz;
-  state.panX = px - vw / 2 - dx * nz;
-  state.panY = py - vh / 2 - dy * nz;
-  syncZoomUI();
-  render();
-}
-
-function fitView(): void {
-  state.zoom = Math.min((vw - 56) / DOC_W, (vh - 56) / DOC_H);
-  state.panX = 0;
-  state.panY = 0;
-  syncZoomUI();
-  render();
-}
-
+/* ============ 座標変換 / ズーム → core/viewState.ts へ分離 ============ */
 function syncZoomUI(): void {
   const pct = `${Math.round(state.zoom * 100)}%`;
   $("#btn-zoom-label").textContent = pct;
@@ -240,67 +42,25 @@ function syncZoomUI(): void {
   $("#st-zoom").textContent = pct;
 }
 
-/* ============ Marching Ants (境界エッジの二値描画を4相で巡回) ============ */
-function rebuildAnts(): void {
-  antsBlack = document.createElement("canvas");
-  antsBlack.width = DOC_W;
-  antsBlack.height = DOC_H;
-  for (let i = 0; i < 4; i++) {
-    const c = document.createElement("canvas");
-    c.width = DOC_W;
-    c.height = DOC_H;
-    antsWhite[i] = c;
-  }
-  if (!hasSelection) return;
-
-  const img = selCtx.getImageData(0, 0, DOC_W, DOC_H);
-  const d = img.data;
-  const at = (x: number, y: number) => (x < 0 || y < 0 || x >= DOC_W || y >= DOC_H ? 0 : d[(y * DOC_W + x) * 4 + 3]);
-
-  const bCtx = antsBlack.getContext("2d")!;
-  bCtx.fillStyle = "#000";
-  const wCtx = antsWhite.map((c) => c.getContext("2d")!);
-  wCtx.forEach((c) => (c.fillStyle = "#fff"));
-
-  for (let y = 0; y < DOC_H; y++) {
-    for (let x = 0; x < DOC_W; x++) {
-      if (at(x, y) < 128) continue;
-      const edge = at(x - 1, y) < 128 || at(x + 1, y) < 128 || at(x, y - 1) < 128 || at(x, y + 1) < 128;
-      if (!edge) continue;
-      bCtx.fillRect(x, y, 1, 1);
-      const p = (x + y) & 3;
-      wCtx[p].fillRect(x, y, 1, 1);
-      wCtx[(p + 1) & 3].fillRect(x, y, 1, 1);
-    }
-  }
-}
-
 /* ============ レンダリング ============ */
-let preview: { tool: ToolId; x0: number; y0: number; x1: number; y1: number } | null = null;
-let lassoPath: { x: number; y: number }[] | null = null;
-let polyPoints: { x: number; y: number }[] = [];
-let polyHover: { x: number; y: number } | null = null;
-let polyDrag: { pts: { x: number; y: number }[]; moved: boolean } | null = null;
-let maskStroke: { mode: SelMode; last: { x: number; y: number } } | null = null;
-let cursorPos: { x: number; y: number } | null = null;
 
 function resizeView(): void {
-  vw = workspace.clientWidth;
-  vh = workspace.clientHeight;
-  view.width = Math.max(1, Math.round(vw * dpr));
-  view.height = Math.max(1, Math.round(vh * dpr));
-  view.style.width = `${vw}px`;
-  view.style.height = `${vh}px`;
+  viewport.vw = workspace.clientWidth;
+  viewport.vh = workspace.clientHeight;
+  view.width = Math.max(1, Math.round(viewport.vw * viewport.dpr));
+  view.height = Math.max(1, Math.round(viewport.vh * viewport.dpr));
+  view.style.width = `${viewport.vw}px`;
+  view.style.height = `${viewport.vh}px`;
   render();
 }
 
 function render(): void {
-  if (!vw) return;
-  vctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  vctx.clearRect(0, 0, vw, vh);
+  if (!viewport.vw) return;
+  vctx.setTransform(viewport.dpr, 0, 0, viewport.dpr, 0, 0);
+  vctx.clearRect(0, 0, viewport.vw, viewport.vh);
 
   vctx.save();
-  vctx.translate(vw / 2 + state.panX, vh / 2 + state.panY);
+  vctx.translate(viewport.vw / 2 + state.panX, viewport.vh / 2 + state.panY);
   vctx.scale(state.zoom, state.zoom);
   vctx.translate(-DOC_W / 2, -DOC_H / 2);
 
@@ -316,10 +76,10 @@ function render(): void {
   }
 
   // 背景レイヤー (前処理フィルター — 選択範囲がある場合はその範囲のみ適用)
-  drawBaseLayer(vctx);
+  filters.drawBaseLayer(vctx);
 
   // ペイントレイヤー (下 → 上)
-  for (const l of layers) {
+  for (const l of doc.layers) {
     if (l.kind === "paint" && l.visible) vctx.drawImage(l.canvas, 0, 0);
   }
 
@@ -332,67 +92,23 @@ function render(): void {
   drawDragSizeBadge(vctx);
 
   // Marching ants (doc解像度のエッジ層を重ね描き)
-  if (hasSelection && antsBlack) {
+  if (selection.hasSelection && selection.antsBlack) {
     vctx.save();
-    vctx.translate(vw / 2 + state.panX, vh / 2 + state.panY);
+    vctx.translate(viewport.vw / 2 + state.panX, viewport.vh / 2 + state.panY);
     vctx.scale(state.zoom, state.zoom);
     vctx.translate(-DOC_W / 2, -DOC_H / 2);
     vctx.imageSmoothingEnabled = false;
-    vctx.drawImage(antsBlack, 0, 0);
-    vctx.drawImage(antsWhite[antPhase % 4], 0, 0);
+    vctx.drawImage(selection.antsBlack, 0, 0);
+    vctx.drawImage(selection.antsWhite[selection.antPhase % 4], 0, 0);
     vctx.restore();
   }
 
   drawCursor();
 }
 
-/** ノイズ(グレイン) — シード固定の決定論的パターンをキャッシュして再利用 (カラー / グレー) */
-const noiseCaches: Record<"color" | "gray", HTMLCanvasElement | null> = { color: null, gray: null };
-function getNoiseCanvas(mode: "color" | "gray"): HTMLCanvasElement {
-  const cached = noiseCaches[mode];
-  if (cached) return cached;
-  const n = document.createElement("canvas");
-  n.width = DOC_W;
-  n.height = DOC_H;
-  const nc = n.getContext("2d")!;
-  const img = nc.createImageData(DOC_W, DOC_H);
-  let s = 0x9e3779b9; // xorshift32 固定シード
-  const rand = (): number => {
-    s ^= s << 13;
-    s ^= s >>> 17;
-    s ^= s << 5;
-    return (s >>> 0) / 4294967296;
-  };
-  for (let i = 0; i < img.data.length; i += 4) {
-    if (mode === "gray") {
-      // グレースケールノイズ: 明るさのみのランダム値 (フィルムグレイン)
-      const v = rand() * 255;
-      img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
-    } else {
-      // カラーノイズ: RGB に独立したランダム値 (カラーグレイン)
-      img.data[i] = rand() * 255;
-      img.data[i + 1] = rand() * 255;
-      img.data[i + 2] = rand() * 255;
-    }
-    img.data[i + 3] = 255;
-  }
-  nc.putImageData(img, 0, 0);
-  noiseCaches[mode] = n;
-  return n;
-}
-
-function drawNoise(g: CanvasRenderingContext2D): void {
-  const strength = filters.noise / 100;
-  if (strength <= 0) return;
-  g.save();
-  g.globalAlpha = strength;
-  g.drawImage(getNoiseCanvas(filters.noiseMode), 0, 0);
-  g.restore();
-}
-
 function drawStrokePreview(g: CanvasRenderingContext2D): void {
-  if (!preview) return;
-  const { x0, y0, x1, y1, tool } = preview;
+  if (!interaction.preview) return;
+  const { x0, y0, x1, y1, tool } = interaction.preview;
   g.save();
   g.strokeStyle = "#fff";
   g.fillStyle = hexA(state.fg, 0.45);
@@ -422,14 +138,14 @@ function drawSelectionPreview(g: CanvasRenderingContext2D): void {
   g.lineWidth = 1 / state.zoom;
 
   // 矩形選択: ドラッグ中の範囲を色付きオーバーレイ + 破線枠で表示
-  if (preview && preview.tool === "select-rect") {
-    const { x0, y0, x1, y1 } = preview;
+  if (interaction.preview && interaction.preview.tool === "select-rect") {
+    const { x0, y0, x1, y1 } = interaction.preview;
     const x = Math.min(x0, x1);
     const y = Math.min(y0, y1);
     const w = Math.abs(x1 - x0);
     const h = Math.abs(y1 - y0);
     // モード色 (確定時の適用モードと対応): 新規=青 / 追加(Shift)=緑 / 除外(Alt)=赤
-    const mode = dragMods ?? state.selMode;
+    const mode = interaction.dragMods ?? state.selMode;
     const tint = mode === "add" ? "34, 197, 94" : mode === "sub" ? "239, 68, 68" : "96, 165, 250";
     g.fillStyle = `rgba(${tint}, 0.28)`;
     g.fillRect(x, y, w, h);
@@ -438,30 +154,30 @@ function drawSelectionPreview(g: CanvasRenderingContext2D): void {
     g.strokeRect(x, y, w, h);
     g.strokeStyle = "#fff";
     g.setLineDash([4 / state.zoom, 3 / state.zoom]);
-    g.lineDashOffset = (-antPhase * 2) / state.zoom;
+    g.lineDashOffset = (-selection.antPhase * 2) / state.zoom;
     g.strokeRect(x, y, w, h);
   }
 
-  if (lassoPath && lassoPath.length > 1) {
+  if (interaction.lassoPath && interaction.lassoPath.length > 1) {
     g.strokeStyle = "#fff";
     g.setLineDash([4 / state.zoom, 3 / state.zoom]);
     g.beginPath();
-    g.moveTo(lassoPath[0].x, lassoPath[0].y);
-    for (const p of lassoPath) g.lineTo(p.x, p.y);
+    g.moveTo(interaction.lassoPath[0].x, interaction.lassoPath[0].y);
+    for (const p of interaction.lassoPath) g.lineTo(p.x, p.y);
     g.stroke();
   }
-  if (state.tool === "polygon" && (polyPoints.length > 0 || polyDrag)) {
-    const pts = polyDrag ? polyPoints.concat(polyDrag.pts) : polyPoints;
+  if (state.tool === "polygon" && (interaction.polyPoints.length > 0 || interaction.polyDrag)) {
+    const pts = interaction.polyDrag ? interaction.polyPoints.concat(interaction.polyDrag.pts) : interaction.polyPoints;
     g.strokeStyle = "#fff";
     g.setLineDash([4 / state.zoom, 3 / state.zoom]);
     g.beginPath();
     g.moveTo(pts[0].x, pts[0].y);
     for (const p of pts) g.lineTo(p.x, p.y);
-    if (polyHover) g.lineTo(polyHover.x, polyHover.y);
+    if (interaction.polyHover) g.lineTo(interaction.polyHover.x, interaction.polyHover.y);
     g.stroke();
 
     // 頂点ハンドル (確定済み頂点のみ。始点は緑ドット)
-    polyPoints.forEach((p, i) => {
+    interaction.polyPoints.forEach((p, i) => {
       g.beginPath();
       g.arc(p.x, p.y, (i === 0 ? 6 : 3.5) / state.zoom, 0, Math.PI * 2);
       g.setLineDash([]);
@@ -482,8 +198,8 @@ function drawSelectionPreview(g: CanvasRenderingContext2D): void {
 
 /** ドラッグ中の図形 / 矩形選択サイズバッジ (W×H、直線は長さ) */
 function drawDragSizeBadge(g: CanvasRenderingContext2D): void {
-  if (!preview) return;
-  const { tool, x0, y0, x1, y1 } = preview;
+  if (!interaction.preview) return;
+  const { tool, x0, y0, x1, y1 } = interaction.preview;
   let label: string;
   if (tool === "line") {
     label = `Len: ${Math.round(Math.hypot(x1 - x0, y1 - y0))} px`;
@@ -491,8 +207,8 @@ function drawDragSizeBadge(g: CanvasRenderingContext2D): void {
     label = `W: ${Math.round(Math.abs(x1 - x0))}  H: ${Math.round(Math.abs(y1 - y0))}`;
   }
   // 矩形選択: モード修飾中 (Shift=追加 / Alt=除外) は先頭に記号を添える
-  if (tool === "select-rect" && dragMods) {
-    label = `${dragMods === "add" ? "＋" : "−"} ${label}`;
+  if (tool === "select-rect" && interaction.dragMods) {
+    label = `${interaction.dragMods === "add" ? "＋" : "−"} ${label}`;
   }
   const padX = 7;
   const padY = 4;
@@ -503,8 +219,8 @@ function drawDragSizeBadge(g: CanvasRenderingContext2D): void {
   // ドラッグ矩形の右下 (スクリーン座標) に配置し、ビューポート内にクランプ
   let bx = docToScreenX(Math.max(x0, x1)) + 10;
   let by = docToScreenY(Math.max(y0, y1)) + 12;
-  bx = Math.min(Math.max(4, bx), vw - bw - 4);
-  by = Math.min(Math.max(4, by), vh - bh - 4);
+  bx = Math.min(Math.max(4, bx), viewport.vw - bw - 4);
+  by = Math.min(Math.max(4, by), viewport.vh - bh - 4);
   g.fillStyle = "rgba(10, 12, 18, 0.85)";
   g.strokeStyle = "rgba(255, 255, 255, 0.22)";
   g.lineWidth = 1;
@@ -519,11 +235,11 @@ function drawDragSizeBadge(g: CanvasRenderingContext2D): void {
 }
 
 function drawCursor(): void {
-  if (!cursorPos) return;
+  if (!interaction.cursorPos) return;
   if (!CIRCLE_CURSOR_TOOLS.includes(state.tool)) return;
   const r = Math.max(2, (state.brushSize * state.zoom) / 2);
-  const x = docToScreenX(cursorPos.x);
-  const y = docToScreenY(cursorPos.y);
+  const x = docToScreenX(interaction.cursorPos.x);
+  const y = docToScreenY(interaction.cursorPos.y);
   vctx.save();
   vctx.lineWidth = 1;
   vctx.strokeStyle = "rgba(0,0,0,0.75)";
@@ -539,168 +255,8 @@ function drawCursor(): void {
   vctx.restore();
 }
 
-/* ants アニメーション (120ms 毎に相を進めて再描画) */
-function startAntLoop(): void {
-  let last = 0;
-  const tick = (t: number): void => {
-    if (t - last > 120) {
-      last = t;
-      if (hasSelection) {
-        antPhase = (antPhase + 1) % 4;
-        render();
-      }
-    }
-    requestAnimationFrame(tick);
-  };
-  requestAnimationFrame(tick);
-}
-
-/* ============ 合成 / Flood Fill / 選択適用 ============ */
-function compositeCanvas(): HTMLCanvasElement {
-  const c = document.createElement("canvas");
-  c.width = DOC_W;
-  c.height = DOC_H;
-  const g = c.getContext("2d")!;
-  drawBaseLayer(g);
-  for (const l of layers) {
-    if (l.kind === "paint" && l.visible) g.drawImage(l.canvas, 0, 0);
-  }
-  return c;
-}
-
-/** スキャンライン flood fill。白二値マスクcanvasを返す */
-function floodMask(cx: number, cy: number, tolerance: number): HTMLCanvasElement {
-  const img = compositeCanvas().getContext("2d")!.getImageData(0, 0, DOC_W, DOC_H);
-  const d = img.data;
-  const sx = Math.max(0, Math.min(DOC_W - 1, cx | 0));
-  const sy = Math.max(0, Math.min(DOC_H - 1, cy | 0));
-  const si = sy * DOC_W + sx;
-  const r0 = d[si * 4], g0 = d[si * 4 + 1], b0 = d[si * 4 + 2];
-  const thresh = (tolerance / 100) * 383;
-  const mask = new Uint8Array(DOC_W * DOC_H);
-  const match = (i: number): boolean => {
-    const dr = d[i * 4] - r0, dg = d[i * 4 + 1] - g0, db = d[i * 4 + 2] - b0;
-    return Math.abs(dr) + Math.abs(dg) + Math.abs(db) <= thresh;
-  };
-
-  const stack: number[] = [sx, sy];
-  while (stack.length) {
-    const y = stack.pop()!;
-    let x = stack.pop()!;
-    let i = y * DOC_W + x;
-    while (x >= 0 && !mask[i] && match(i)) { x--; i--; }
-    x++; i++;
-    let up = false;
-    let down = false;
-    while (x < DOC_W && !mask[i] && match(i)) {
-      mask[i] = 1;
-      if (y > 0) {
-        const ui = i - DOC_W;
-        const m = !mask[ui] && match(ui);
-        if (m && !up) { stack.push(x, y - 1); up = true; } else if (!m) up = false;
-      }
-      if (y < DOC_H - 1) {
-        const di = i + DOC_W;
-        const m = !mask[di] && match(di);
-        if (m && !down) { stack.push(x, y + 1); down = true; } else if (!m) down = false;
-      }
-      x++; i++;
-    }
-  }
-
-  const out = document.createElement("canvas");
-  out.width = DOC_W;
-  out.height = DOC_H;
-  const oc = out.getContext("2d")!;
-  const od = oc.createImageData(DOC_W, DOC_H);
-  for (let i = 0; i < mask.length; i++) {
-    if (mask[i]) {
-      od.data[i * 4] = 255;
-      od.data[i * 4 + 1] = 255;
-      od.data[i * 4 + 2] = 255;
-      od.data[i * 4 + 3] = 255;
-    }
-  }
-  oc.putImageData(od, 0, 0);
-  return out;
-}
-
-/** 選択形状を selMask へ合成 (新規 / 追加 / 除外 — Shift/Alt 修飾優先) */
-function applySelection(shape: (g: CanvasRenderingContext2D) => void, modeOverride?: SelMode): void {
-  const mode = modeOverride ?? dragMods ?? state.selMode;
-  if (mode === "new") selCtx.clearRect(0, 0, DOC_W, DOC_H);
-  selCtx.globalCompositeOperation = mode === "sub" ? "destination-out" : "source-over";
-  selCtx.fillStyle = "#fff";
-  shape(selCtx);
-  selCtx.globalCompositeOperation = "source-over";
-  hasSelection = selHasContent();
-  rebuildAnts();
-  syncToolGuide();
-  markDirty();
-}
-
-function selHasContent(): boolean {
-  const d = selCtx.getImageData(0, 0, DOC_W, DOC_H).data;
-  for (let i = 3; i < d.length; i += 16) if (d[i] > 0) return true;
-  return false;
-}
-
-function clearSelection(): void {
-  selCtx.clearRect(0, 0, DOC_W, DOC_H);
-  hasSelection = false;
-  rebuildAnts();
-  syncToolGuide();
-}
-
-/** 選択範囲を描画色で塗りつぶし */
-function fillSelection(): void {
-  if (!hasSelection) {
-    toast("先に選択範囲を作成してください", "info");
-    return;
-  }
-  const targets = editTargets().filter((l) => l.kind === "paint");
-  if (!targets.length) {
-    toast("ペイントレイヤーを編集対象にしてください", "info");
-    return;
-  }
-  pushUndo();
-  const m = clone(selMask);
-  tintMask(m, state.fg);
-  targets.forEach((l) => {
-    l.ctx.save();
-    l.ctx.globalAlpha = state.opacity / 100;
-    l.ctx.drawImage(m, 0, 0);
-    l.ctx.restore();
-  });
-  markDirty();
-  render();
-  toast(targets.length > 1 ? `選択範囲を ${targets.length} レイヤーに塗りつぶしました` : "選択範囲を塗りつぶしました", "ok");
-}
-
-/** 選択解除 (Ctrl+D) */
-function deselect(): void {
-  if (!hasSelection) return;
-  clearSelection();
-  toast("選択を解除しました", "info");
-}
-
-function selectAll(): void {
-  applySelection((g) => g.fillRect(0, 0, DOC_W, DOC_H), "new");
-  toast("キャンバス全体を選択", "info");
-}
-
-/** 合成画像から色を取得 */
-function pickColor(x: number, y: number): string | null {
-  if (x < 0 || y < 0 || x >= DOC_W || y >= DOC_H) return null;
-  const d = compositeCanvas().getContext("2d")!.getImageData(x | 0, y | 0, 1, 1).data;
-  const to2 = (n: number) => n.toString(16).padStart(2, "0");
-  return `#${to2(d[0])}${to2(d[1])}${to2(d[2])}`;
-}
-
 /* ============ レタッチツール (指先 / 覆い焼き / 焼き込み) ============ */
 /** レタッチは編集対象レイヤー (アクティブ + Ctrl+クリックで追加した対象) に直接作用する */
-
-let retouchLast: { x: number; y: number } | null = null;
 
 /* --- 指先 (スマッジ) --- */
 const stampBuf = document.createElement("canvas");
@@ -741,10 +297,10 @@ function smudgeStamp(target: Layer, from: { x: number; y: number }, to: { x: num
     g.drawImage(target.canvas, cx0, cy0, cx1 - cx0, cy1 - cy0, cx0 - sx, cy0 - sy, cx1 - cx0, cy1 - cy0);
     g.globalCompositeOperation = "source-over";
   }
-  if (hasSelection) {
+  if (selection.hasSelection) {
     // 選択範囲がある場合はスタンプを選択マスクで切り抜き、外側に効果が出ないようにする
     g.globalCompositeOperation = "destination-in";
-    g.drawImage(selMask, Math.round(to.x - r), Math.round(to.y - r), size, size, 0, 0, size, size);
+    g.drawImage(selection.mask, Math.round(to.x - r), Math.round(to.y - r), size, size, 0, 0, size, size);
     g.globalCompositeOperation = "source-over";
   }
   const ctx = target.ctx;
@@ -780,7 +336,7 @@ function toneStamp(target: Layer, mode: "dodge" | "burn", at: { x: number; y: nu
   const cy = at.y - sy;
   const kBase = (state.opacity / 100) * 0.4;
   // 選択範囲がある場合は選択マスクのアルファで効果を減衰 (0 = 完全に効果なし)
-  const selD = hasSelection ? selCtx.getImageData(sx, sy, w, h).data : null;
+  const selD = selection.hasSelection ? selection.ctx.getImageData(sx, sy, w, h).data : null;
   for (let y = 0; y < h; y++) {
     const dy = y + 0.5 - cy;
     const dy2 = dy * dy;
@@ -852,7 +408,7 @@ function bloatStamp(target: Layer, at: { x: number; y: number }, sign: 1 | -1, p
   const cy = at.y - sy;
   const k = (state.opacity / 100) * pull;
   // 選択範囲がある場合は選択マスクのアルファで効果を減衰 (0 = 完全に効果なし)
-  const selD = hasSelection ? selCtx.getImageData(sx, sy, w, h).data : null;
+  const selD = selection.hasSelection ? selection.ctx.getImageData(sx, sy, w, h).data : null;
   for (let y = 0; y < h; y++) {
     const dy = y + 0.5 - cy;
     const dy2 = dy * dy;
@@ -923,11 +479,9 @@ let bloatHoldRaf = 0;
 let bloatHoldLast = 0;
 /** 最後にスタンプした位置 (rAF フレーム間の移動を補間するため保持) */
 let bloatHoldPos: { x: number; y: number } | null = null;
-/** Alt キーの押下状態 (rAF ループ内ではイベントが取れないため追跡) */
-let altKeyDown = false;
 
 function bloatHoldTick(now: number): void {
-  const at = retouchLast;
+  const at = interaction.retouchLast;
   if (!at || state.tool !== "bloat") {
     bloatHoldRaf = 0;
     bloatHoldPos = null;
@@ -943,8 +497,8 @@ function bloatHoldTick(now: number): void {
   // 合計の適用率が常に時間比例 (BLOAT_HOLD_RATE × dt) になるよう 1 スタンプ分ずつ配分する
   const pull = Math.min(BLOAT_PULL, (BLOAT_HOLD_RATE * dt) / n);
   if (pull > 0.0005) {
-    const sign = bloatSign(altKeyDown);
-    editTargets().forEach((l) => {
+    const sign = bloatSign(interaction.altKey);
+    doc.editTargets().forEach((l) => {
       for (let i = 1; i <= n; i++) {
         bloatStamp(l, { x: from.x + ((at.x - from.x) * i) / n, y: from.y + ((at.y - from.y) * i) / n }, sign, pull);
       }
@@ -985,8 +539,6 @@ function retouchStroke(
 }
 
 /* ============ フィルターペン (なぞった範囲にフィルターを焼き込む) ============ */
-/** ドラッグ中の最後の座標 */
-let filterPenLast: { x: number; y: number } | null = null;
 /** ストローク開始時の対象レイヤースナップショット。基準画像を固定することで、同一ストローク内で重ね塗りしてもフィルターが二重に効かない */
 const filterPenBase = new Map<number, HTMLCanvasElement>();
 /** ペンでなぞった領域の累積マスク (白 = 適用済み) */
@@ -1002,7 +554,7 @@ const filterPenMaskCtx = filterPenMask.getContext("2d")!;
  * (確定前のフィルタープレビューとは独立に、ピクセルへ直接適用される)。
  */
 function applyFilterPenSegment(from: { x: number; y: number }, to: { x: number; y: number }): void {
-  const targets = editTargets();
+  const targets = doc.editTargets();
   if (!targets.length) return;
   // ぼかしのはみ出し分 (blur radius) も bbox に含める
   const blurPad = filters.on.blur && filters.blur > 0 ? filters.blur : 0;
@@ -1034,13 +586,13 @@ function applyFilterPenSegment(from: { x: number; y: number }, to: { x: number; 
     tg.translate(-bx, -by);
     tg.globalCompositeOperation = "source-over";
     tg.clearRect(bx, by, bw, bh);
-    tg.filter = filterString();
+    tg.filter = filters.filterString();
     tg.drawImage(base, 0, 0);
     tg.filter = "none";
-    if (filters.on.noise && filters.noise > 0) drawNoise(tg);
+    if (filters.on.noise && filters.noise > 0) filters.drawNoise(tg);
     tg.globalCompositeOperation = "destination-in";
-    if (hasSelection) {
-      tg.drawImage(selMask, 0, 0);
+    if (selection.hasSelection) {
+      tg.drawImage(selection.mask, 0, 0);
     }
     tg.drawImage(filterPenMask, 0, 0);
     tg.restore();
@@ -1052,9 +604,6 @@ function applyFilterPenSegment(from: { x: number; y: number }, to: { x: number; 
 }
 
 /* ============ ポインタ操作 ============ */
-let strokeLast: { x: number; y: number } | null = null;
-let panning: { sx: number; sy: number } | null = null;
-let dragStart: { x: number; y: number } | null = null;
 
 function localPos(e: PointerEvent | MouseEvent): { x: number; y: number } {
   const r = view.getBoundingClientRect();
@@ -1095,7 +644,7 @@ function ensureStrokeTmp(w: number, h: number): void {
 /**
  * レイヤーへストロークを合成する。
  * 選択範囲がなければ従来どおり直接描画し、あれば
- * 「作業canvasに不透明でストロークを描く → selMask で切り抜き → 不透明度を効かせてレイヤーへ合成」
+ * 「作業canvasに不透明でストロークを描く → selection.mask で切り抜き → 不透明度を効かせてレイヤーへ合成」
  * の順で処理することで、選択範囲の外側には一切描画されない。
  * draw: 実際の描画処理。(x0,y0)-(x1,y1) はストロークbbox (doc座標)、pad は線幅等のマージン。
  */
@@ -1108,7 +657,7 @@ function paintStroke(
   y1: number,
   pad: number,
 ): void {
-  if (!hasSelection) {
+  if (!selection.hasSelection) {
     ctx.save();
     setupStrokeStyle(ctx);
     draw(ctx);
@@ -1135,7 +684,7 @@ function paintStroke(
   // 2) 選択マスクで切り抜く
   tg.save();
   tg.globalCompositeOperation = "destination-in";
-  tg.drawImage(selMask, -bx, -by);
+  tg.drawImage(selection.mask, -bx, -by);
   tg.restore();
   // 3) レイヤーへ合成 (不透明度はここで一度だけ効く。消しゴムは destination-out)
   ctx.save();
@@ -1152,7 +701,7 @@ function onPointerDown(e: PointerEvent): void {
   view.setPointerCapture(e.pointerId);
 
   if (state.spacePan || state.tool === "pan" || e.button === 1) {
-    panning = { sx: s.x - state.panX, sy: s.y - state.panY };
+    interaction.panning = { sx: s.x - state.panX, sy: s.y - state.panY };
     stage.classList.add("is-panning");
     return;
   }
@@ -1160,87 +709,80 @@ function onPointerDown(e: PointerEvent): void {
   switch (state.tool) {
     case "brush":
     case "eraser": {
-      pushUndo();
+      history.pushUndo();
       markDirty();
-      editTargets().forEach((l) => paintStroke(l.ctx, (g) => drawLineSeg(g, d, d), d.x, d.y, d.x, d.y, state.brushSize / 2 + 2));
-      strokeLast = d;
+      doc.editTargets().forEach((l) => paintStroke(l.ctx, (g) => drawLineSeg(g, d, d), d.x, d.y, d.x, d.y, state.brushSize / 2 + 2));
+      interaction.strokeLast = d;
       break;
     }
     case "smudge":
     case "bloat":
     case "dodge":
     case "burn": {
-      pushUndo();
+      history.pushUndo();
       markDirty();
       if (state.tool === "bloat") {
         // クリック時のフィードバックとして 0.25 秒分の控えめな膨張を 1 回適用し、
         // 以降の適用は rAF ホールドループ (時間ベース) に一任する
-        editTargets().forEach((l) => bloatStamp(l, d, bloatSign(e.altKey), BLOAT_HOLD_RATE * 0.25));
+        doc.editTargets().forEach((l) => bloatStamp(l, d, bloatSign(e.altKey), BLOAT_HOLD_RATE * 0.25));
         startBloatHold();
       } else if (state.tool !== "smudge") {
         const mode = toneMode(e.altKey);
-        editTargets().forEach((l) => toneStamp(l, mode, d));
+        doc.editTargets().forEach((l) => toneStamp(l, mode, d));
       }
-      retouchLast = d;
+      interaction.retouchLast = d;
       break;
     }
     case "filter-pen": {
-      if (!filtersActive()) {
+      if (!filters.filtersActive()) {
         toast("先にフィルタータブでフィルターを有効にしてください", "info");
         break;
       }
-      pushUndo();
+      history.pushUndo();
       markDirty();
       filterPenBase.clear();
-      editTargets().forEach((l) => filterPenBase.set(l.id, clone(l.canvas)));
+      doc.editTargets().forEach((l) => filterPenBase.set(l.id, clone(l.canvas)));
       filterPenMaskCtx.clearRect(0, 0, DOC_W, DOC_H);
       applyFilterPenSegment(d, d);
-      filterPenLast = d;
+      interaction.filterPenLast = d;
       break;
     }
     case "line":
     case "rect":
     case "ellipse":
     case "select-rect":
-      dragStart = d;
-      preview = { tool: state.tool, x0: d.x, y0: d.y, x1: d.x, y1: d.y };
+      interaction.dragStart = d;
+      interaction.preview = { tool: state.tool, x0: d.x, y0: d.y, x1: d.x, y1: d.y };
       break;
     case "lasso":
-      lassoPath = [d];
+      interaction.lassoPath = [d];
       break;
     case "polygon":
       // クリック=頂点追加 / ドラッグ=フリーハンド。判別は pointerup で行う
-      polyDrag = { pts: [d], moved: false };
-      polyHover = d;
+      interaction.polyDrag = { pts: [d], moved: false };
+      interaction.polyHover = d;
       break;
     case "mask-pen": {
-      pushUndo();
+      history.pushUndo();
       markDirty();
-      const mode = dragMods ?? state.selMode;
-      if (mode === "new") selCtx.clearRect(0, 0, DOC_W, DOC_H);
-      selCtx.save();
-      selCtx.globalCompositeOperation = mode === "sub" ? "destination-out" : "source-over";
-      selCtx.strokeStyle = "#fff";
-      selCtx.lineWidth = state.brushSize;
-      selCtx.lineCap = "round";
-      selCtx.lineJoin = "round";
-      drawLineSeg(selCtx, d, d);
-      selCtx.restore();
-      maskStroke = { mode, last: d };
+      const mode = interaction.dragMods ?? state.selMode;
+      selection.beginMaskStroke(mode);
+      selection.paintMaskSegment(d, d);
+      interaction.maskStroke = { mode, last: d };
       break;
     }
     case "bucket": {
-      const m = floodMask(d.x, d.y, state.tolerance);
-      if (hasSelection) {
+      const m = floodMask(doc.compositeCanvas(), d.x, d.y, state.tolerance);
+      if (selection.hasSelection) {
         // 選択範囲がある場合は選択範囲との交差部分のみを塗る
         const mg = m.getContext("2d")!;
         mg.globalCompositeOperation = "destination-in";
-        mg.drawImage(selMask, 0, 0);
+        mg.drawImage(selection.mask, 0, 0);
         mg.globalCompositeOperation = "source-over";
       }
       tintMask(m, state.fg);
-      pushUndo();
-      editTargets().forEach((l) => {
+      history.pushUndo();
+      doc.editTargets().forEach((l) => {
         l.ctx.save();
         setupStrokeStyle(l.ctx);
         l.ctx.drawImage(m, 0, 0);
@@ -1250,13 +792,13 @@ function onPointerDown(e: PointerEvent): void {
       break;
     }
     case "wand": {
-      const m = floodMask(d.x, d.y, state.tolerance);
-      applySelection((g) => g.drawImage(m, 0, 0));
+      const m = floodMask(doc.compositeCanvas(), d.x, d.y, state.tolerance);
+      selection.applySelection((g) => g.drawImage(m, 0, 0));
       toast(`類似色範囲を選択 (許容度 ${state.tolerance})`, "info");
       break;
     }
     case "eyedropper": {
-      const c = pickColor(d.x, d.y);
+      const c = doc.pickColor(d.x, d.y);
       if (c) {
         state.fg = c;
         ($("#swatch-fg") as HTMLButtonElement).style.background = c;
@@ -1274,106 +816,99 @@ function onPointerDown(e: PointerEvent): void {
 function onPointerMove(e: PointerEvent): void {
   const s = localPos(e);
   const d = screenToDoc(s.x, s.y);
-  cursorPos = d;
+  interaction.cursorPos = d;
 
   const inside = d.x >= 0 && d.y >= 0 && d.x < DOC_W && d.y < DOC_H;
   $("#st-pos").textContent = inside ? `X: ${Math.floor(d.x)}  Y: ${Math.floor(d.y)}` : "X: —  Y: —";
 
-  if (panning) {
-    state.panX = s.x - panning.sx;
-    state.panY = s.y - panning.sy;
-  } else if (strokeLast) {
-    const from = strokeLast;
-    editTargets().forEach((l) => paintStroke(l.ctx, (g) => drawLineSeg(g, from, d), from.x, from.y, d.x, d.y, state.brushSize / 2 + 2));
-    strokeLast = d;
-  } else if (retouchLast) {
+  if (interaction.panning) {
+    state.panX = s.x - interaction.panning.sx;
+    state.panY = s.y - interaction.panning.sy;
+  } else if (interaction.strokeLast) {
+    const from = interaction.strokeLast;
+    doc.editTargets().forEach((l) => paintStroke(l.ctx, (g) => drawLineSeg(g, from, d), from.x, from.y, d.x, d.y, state.brushSize / 2 + 2));
+    interaction.strokeLast = d;
+  } else if (interaction.retouchLast) {
     if (state.tool === "bloat") {
       // 膨張の適用は rAF ホールドループ (時間ベース) に一任し、ここでは位置追従のみ行う。
       // ここでスタンプすると mouse の micro-move (125-1000Hz) ごとに全強度スタンプが発射し、
       // 押しっぱなし中の手ブレ方向 (多くは左上) へ画像が激しく引っ張られてしまう
-      retouchLast = d;
+      interaction.retouchLast = d;
     } else {
-      const from = retouchLast;
-      editTargets().forEach((l) => {
+      const from = interaction.retouchLast;
+      doc.editTargets().forEach((l) => {
         if (state.tool === "smudge") retouchStroke((f, t) => smudgeStamp(l, f, t), from, d);
         else retouchStroke((_f, t) => toneStamp(l, toneMode(e.altKey), t), from, d);
       });
-      retouchLast = d;
+      interaction.retouchLast = d;
     }
-  } else if (filterPenLast) {
-    applyFilterPenSegment(filterPenLast, d);
-    filterPenLast = d;
-  } else if (preview && dragStart) {
+  } else if (interaction.filterPenLast) {
+    applyFilterPenSegment(interaction.filterPenLast, d);
+    interaction.filterPenLast = d;
+  } else if (interaction.preview && interaction.dragStart) {
     let { x, y } = d;
     if (e.shiftKey) {
-      const dx = x - dragStart.x;
-      const dy = y - dragStart.y;
-      if (preview.tool === "line") {
-        if (Math.abs(dx) > Math.abs(dy) * 2) y = dragStart.y;
-        else if (Math.abs(dy) > Math.abs(dx) * 2) x = dragStart.x;
+      const dx = x - interaction.dragStart.x;
+      const dy = y - interaction.dragStart.y;
+      if (interaction.preview.tool === "line") {
+        if (Math.abs(dx) > Math.abs(dy) * 2) y = interaction.dragStart.y;
+        else if (Math.abs(dy) > Math.abs(dx) * 2) x = interaction.dragStart.x;
         else {
           const m = Math.min(Math.abs(dx), Math.abs(dy));
-          x = dragStart.x + Math.sign(dx) * m;
-          y = dragStart.y + Math.sign(dy) * m;
+          x = interaction.dragStart.x + Math.sign(dx) * m;
+          y = interaction.dragStart.y + Math.sign(dy) * m;
         }
       } else {
         const m = Math.max(Math.abs(dx), Math.abs(dy));
-        x = dragStart.x + Math.sign(dx || 1) * m;
-        y = dragStart.y + Math.sign(dy || 1) * m;
+        x = interaction.dragStart.x + Math.sign(dx || 1) * m;
+        y = interaction.dragStart.y + Math.sign(dy || 1) * m;
       }
     }
-    preview.x1 = x;
-    preview.y1 = y;
-  } else if (lassoPath) {
-    const lastP = lassoPath[lassoPath.length - 1];
-    if (Math.hypot(d.x - lastP.x, d.y - lastP.y) * state.zoom > 2) lassoPath.push(d);
-  } else if (maskStroke) {
-    selCtx.save();
-    selCtx.globalCompositeOperation = maskStroke.mode === "sub" ? "destination-out" : "source-over";
-    selCtx.strokeStyle = "#fff";
-    selCtx.lineWidth = state.brushSize;
-    selCtx.lineCap = "round";
-    selCtx.lineJoin = "round";
-    drawLineSeg(selCtx, maskStroke.last, d);
-    selCtx.restore();
-    maskStroke.last = d;
-  } else if (polyDrag) {
+    interaction.preview.x1 = x;
+    interaction.preview.y1 = y;
+  } else if (interaction.lassoPath) {
+    const lastP = interaction.lassoPath[interaction.lassoPath.length - 1];
+    if (Math.hypot(d.x - lastP.x, d.y - lastP.y) * state.zoom > 2) interaction.lassoPath.push(d);
+  } else if (interaction.maskStroke) {
+    selection.paintMaskSegment(interaction.maskStroke.last, d);
+    interaction.maskStroke.last = d;
+  } else if (interaction.polyDrag) {
     // ドラッグ中は投げ縄のように連続頂点を収集
-    const lastP = polyDrag.pts[polyDrag.pts.length - 1];
+    const lastP = interaction.polyDrag.pts[interaction.polyDrag.pts.length - 1];
     if (Math.hypot(d.x - lastP.x, d.y - lastP.y) * state.zoom > 3) {
-      polyDrag.pts.push(d);
-      polyDrag.moved = true;
+      interaction.polyDrag.pts.push(d);
+      interaction.polyDrag.moved = true;
     }
-    polyHover = d;
-  } else if (state.tool === "polygon" && polyPoints.length > 0) {
-    polyHover = d;
+    interaction.polyHover = d;
+  } else if (state.tool === "polygon" && interaction.polyPoints.length > 0) {
+    interaction.polyHover = d;
   }
   render();
 }
 
 function onPointerUp(): void {
-  panning = null;
+  interaction.panning = null;
   stage.classList.remove("is-panning");
 
   // 図形 / 矩形選択の確定
-  if (preview && dragStart) {
-    const p = { ...preview };
-    preview = null;
+  if (interaction.preview && interaction.dragStart) {
+    const p = { ...interaction.preview };
+    interaction.preview = null;
     if (p.tool === "select-rect") {
       const x = Math.min(p.x0, p.x1);
       const y = Math.min(p.y0, p.y1);
       const w = Math.abs(p.x1 - p.x0);
       const h = Math.abs(p.y1 - p.y0);
-      if (w > 2 && h > 2) applySelection((g) => g.fillRect(x, y, w, h));
+      if (w > 2 && h > 2) selection.applySelection((g) => g.fillRect(x, y, w, h));
     } else {
-      pushUndo();
+      history.pushUndo();
       markDirty();
       const px0 = Math.min(p.x0, p.x1);
       const py0 = Math.min(p.y0, p.y1);
       const px1 = Math.max(p.x0, p.x1);
       const py1 = Math.max(p.y0, p.y1);
       const lwPad = state.brushSize / 2 + 2;
-      editTargets().forEach((l) => {
+      doc.editTargets().forEach((l) => {
         const ctx = l.ctx;
         if (p.tool === "line") {
           paintStroke(ctx, (g) => drawLineSeg(g, { x: p.x0, y: p.y0 }, { x: p.x1, y: p.y1 }), p.x0, p.y0, p.x1, p.y1, lwPad);
@@ -1405,11 +940,11 @@ function onPointerUp(): void {
   }
 
   // 投げ縄の確定
-  if (lassoPath) {
-    const pts = lassoPath;
-    lassoPath = null;
+  if (interaction.lassoPath) {
+    const pts = interaction.lassoPath;
+    interaction.lassoPath = null;
     if (pts.length > 2) {
-      applySelection((g) => {
+      selection.applySelection((g) => {
         g.beginPath();
         g.moveTo(pts[0].x, pts[0].y);
         for (const p of pts) g.lineTo(p.x, p.y);
@@ -1420,48 +955,46 @@ function onPointerUp(): void {
   }
 
   // 選択ペンのストローク確定 → Marching ants を更新
-  if (maskStroke) {
-    maskStroke = null;
-    hasSelection = selHasContent();
-    rebuildAnts();
-    syncToolGuide();
+  if (interaction.maskStroke) {
+    interaction.maskStroke = null;
+    selection.commitMaskStroke();
   }
 
   // 多角形: クリック=頂点追加 / ドラッグ=フリーハンド連結
-  if (polyDrag) {
-    const drag = polyDrag;
-    polyDrag = null;
+  if (interaction.polyDrag) {
+    const drag = interaction.polyDrag;
+    interaction.polyDrag = null;
     if (!drag.moved) {
       // クリック: 始点近傍なら閉じる、そうでなければ頂点を追加
       const d = drag.pts[0];
-      const nearStart = polyPoints.length > 2 && Math.hypot(d.x - polyPoints[0].x, d.y - polyPoints[0].y) * state.zoom < 10;
+      const nearStart = interaction.polyPoints.length > 2 && Math.hypot(d.x - interaction.polyPoints[0].x, d.y - interaction.polyPoints[0].y) * state.zoom < 10;
       if (nearStart) closePolygon();
-      else polyPoints.push(d);
+      else interaction.polyPoints.push(d);
     } else {
       for (const p of drag.pts) {
-        const lp = polyPoints[polyPoints.length - 1];
-        if (!lp || Math.hypot(p.x - lp.x, p.y - lp.y) * state.zoom > 1.5) polyPoints.push(p);
+        const lp = interaction.polyPoints[interaction.polyPoints.length - 1];
+        if (!lp || Math.hypot(p.x - lp.x, p.y - lp.y) * state.zoom > 1.5) interaction.polyPoints.push(p);
       }
     }
-    polyHover = null;
+    interaction.polyHover = null;
   }
 
   stopBloatHold();
-  strokeLast = null;
-  retouchLast = null;
-  filterPenLast = null;
+  interaction.strokeLast = null;
+  interaction.retouchLast = null;
+  interaction.filterPenLast = null;
   filterPenBase.clear();
-  dragStart = null;
+  interaction.dragStart = null;
   render();
 }
 
 function closePolygon(): void {
-  const pts = polyPoints;
-  polyPoints = [];
-  polyDrag = null;
-  polyHover = null;
+  const pts = interaction.polyPoints;
+  interaction.polyPoints = [];
+  interaction.polyDrag = null;
+  interaction.polyHover = null;
   if (pts.length >= 3) {
-    applySelection((g) => {
+    selection.applySelection((g) => {
       g.beginPath();
       g.moveTo(pts[0].x, pts[0].y);
       for (const p of pts) g.lineTo(p.x, p.y);
@@ -1474,10 +1007,10 @@ function closePolygon(): void {
 }
 
 function cancelPolygon(): void {
-  if (polyPoints.length > 0 || polyDrag) {
-    polyPoints = [];
-    polyDrag = null;
-    polyHover = null;
+  if (interaction.polyPoints.length > 0 || interaction.polyDrag) {
+    interaction.polyPoints = [];
+    interaction.polyDrag = null;
+    interaction.polyHover = null;
     render();
     toast("多角形選択を取消", "info");
   }
@@ -1497,7 +1030,6 @@ function onWheel(e: WheelEvent): void {
 }
 
 /* ============ UI配線: ツール / パネル ============ */
-let dragMods: SelMode | null = null;
 
 /** ツールスタック (階層ボタン) のメイン表示を選択中ツールに追従させる */
 function syncToolStackDisplay(tool: ToolId): void {
@@ -1523,8 +1055,8 @@ function syncToolStackDisplay(tool: ToolId): void {
 
 /** ステータスバーの操作ガイドを更新 (選択中は「範囲内のみ」・複数対象時は「N レイヤーに適用」注記を添える) */
 function syncToolGuide(): void {
-  const selNote = hasSelection && PAINT_TOOLS.includes(state.tool) ? " · 選択範囲内のみ描画" : "";
-  const targets = editTargets().length;
+  const selNote = selection.hasSelection && PAINT_TOOLS.includes(state.tool) ? " · 選択範囲内のみ描画" : "";
+  const targets = doc.editTargets().length;
   const multiNote = PAINT_TOOLS.includes(state.tool) && targets > 1 ? ` · 編集対象 ${targets} レイヤーに適用` : "";
   $("#st-guide").textContent = TOOLS[state.tool].guide + selNote + multiNote;
 }
@@ -1563,7 +1095,7 @@ function syncBrushPreview(): void {
   const size = Math.max(3, Math.min(max, state.brushSize));
   d.style.width = `${size}px`;
   d.style.height = `${size}px`;
-  $("#brush-preview-label").textContent = `⌀ ${state.brushSize} px`;
+  $("#brush-interaction.preview-label").textContent = `⌀ ${state.brushSize} px`;
   $("#ctl-size-val").textContent = `${state.brushSize} px`;
 }
 
@@ -1703,74 +1235,22 @@ const FX_FORMAT: Record<string, (v: number) => string> = {
 };
 
 function syncFilterUI(): void {
+  // フィルターエンジンの数値フィールドへキー文字列でアクセスするためのビュー
+  const numeric = filters as unknown as Record<string, number>;
   for (const key of Object.keys(filters.on)) {
     const box = $(`input[data-fx-on="${key}"]`) as HTMLInputElement;
     const range = $(`input[data-fx-range="${key}"]`) as HTMLInputElement;
     const val = $(`[data-fx-val="${key}"]`);
     box.checked = filters.on[key];
-    range.value = String(filters[key as keyof typeof filters]);
+    range.value = String(numeric[key]);
     paintRangeFill(range);
-    val.textContent = FX_FORMAT[key]((filters[key as keyof typeof filters] as number));
+    val.textContent = FX_FORMAT[key](numeric[key]);
     ($(`.fx[data-fx="${key}"]`) as HTMLElement).classList.toggle("is-on", filters.on[key]);
   }
   // ノイズの種類 (カラー / グレー) ボタンの反映
   $$("button[data-fx-noise-mode]").forEach((b) =>
     b.classList.toggle("is-active", (b as HTMLElement).dataset.fxNoiseMode === filters.noiseMode),
   );
-}
-
-/**
- * フィルターを確定(ベイク): 現在のフィルター結果を背景レイヤーのピクセルに焼き込み、
- * フィルター設定をリセットする。選択範囲がある場合はその範囲のみ焼き込む。
- */
-function bakeFilters(): void {
-  const base = layers.find((l) => l.kind === "base");
-  if (!base || !filtersActive()) {
-    toast("有効なフィルターがありません", "info");
-    return;
-  }
-  pushUndo(base);
-
-  // 1) フィルター適用済み画像を作る
-  const filtered = document.createElement("canvas");
-  filtered.width = DOC_W;
-  filtered.height = DOC_H;
-  const fg = filtered.getContext("2d")!;
-  fg.filter = filterString();
-  fg.drawImage(base.canvas, 0, 0);
-  fg.filter = "none";
-  if (filters.on.noise && filters.noise > 0) drawNoise(fg);
-
-  // 2) 背景レイヤーに焼き込む(選択範囲があればその範囲のみ)
-  if (hasSelection) {
-    const masked = document.createElement("canvas");
-    masked.width = DOC_W;
-    masked.height = DOC_H;
-    const mg = masked.getContext("2d")!;
-    mg.drawImage(filtered, 0, 0);
-    mg.globalCompositeOperation = "destination-in";
-    mg.drawImage(selMask, 0, 0);
-    mg.globalCompositeOperation = "source-over";
-    base.ctx.drawImage(masked, 0, 0);
-  } else {
-    base.ctx.clearRect(0, 0, DOC_W, DOC_H);
-    base.ctx.drawImage(filtered, 0, 0);
-  }
-
-  // 3) フィルター設定をリセット
-  Object.keys(filters.on).forEach((k) => (filters.on[k] = false));
-  filters.blur = 0;
-  filters.noise = 0;
-  filters.noiseMode = "color";
-  filters.brightness = 100;
-  filters.contrast = 100;
-  filters.saturate = 100;
-  filters.hue = 0;
-  syncFilterUI();
-  renderLayers();
-  markDirty();
-  render();
-  toast(hasSelection ? "選択範囲にフィルターを確定しました" : "フィルターを確定しました(ベイク)", "fx");
 }
 
 function bindFilters(): void {
@@ -1786,7 +1266,7 @@ function bindFilters(): void {
   $$("input[data-fx-range]").forEach((el) =>
     el.addEventListener("input", () => {
       const key = (el as HTMLElement).dataset.fxRange!;
-      (filters[key as keyof typeof filters] as number) = Number((el as HTMLInputElement).value);
+      (filters as unknown as Record<string, number>)[key] = Number((el as HTMLInputElement).value);
       syncFilterUI();
       if (filters.on[key]) { markDirty(); render(); }
     }),
@@ -1803,16 +1283,9 @@ function bindFilters(): void {
     }),
   );
   // フィルターの確定(ベイク) / リセット
-  $("#btn-filter-apply").addEventListener("click", bakeFilters);
+  $("#btn-filter-apply").addEventListener("click", () => filters.bake());
   $("#btn-filter-reset").addEventListener("click", () => {
-    Object.keys(filters.on).forEach((k) => (filters.on[k] = false));
-    filters.blur = 0;
-    filters.noise = 0;
-    filters.noiseMode = "color";
-    filters.brightness = 100;
-    filters.contrast = 100;
-    filters.saturate = 100;
-    filters.hue = 0;
+    filters.resetValues();
     syncFilterUI();
     render();
     toast("フィルターをリセット", "fx");
@@ -1823,7 +1296,7 @@ function bindFilters(): void {
 function layerBadgeHTML(l: Layer): string {
   let html = "";
   // 編集対象バッジ (アクティブレイヤー以外の追加対象に表示)
-  if (editTargetIds.has(l.id) && l.id !== activeLayerId) {
+  if (doc.editTargetIds.has(l.id) && l.id !== doc.activeLayerId) {
     html += `<span class="layer__badge layer__badge--target" title="編集対象 (Ctrl+クリックで解除)"><i data-icon="link"></i>編集</span>`;
   }
   if (l.kind === "base") {
@@ -1833,33 +1306,12 @@ function layerBadgeHTML(l: Layer): string {
   return html;
 }
 
-/** レイヤーリストのクリック: 通常クリック=アクティブ切替 (編集対象をリセット) / Ctrl+クリック=編集対象へ追加・解除 */
-function selectLayer(l: Layer, additive: boolean): void {
-  if (additive) {
-    if (l.id === activeLayerId) return; // アクティブレイヤーは常に編集対象
-    if (editTargetIds.has(l.id)) {
-      editTargetIds.delete(l.id);
-      toast(`「${l.name}」を編集対象から解除`, "info");
-    } else {
-      editTargetIds.add(l.id);
-      toast(`「${l.name}」を編集対象に追加 (${editTargets().length} 対象)`, "ok");
-    }
-  } else if (l.id !== activeLayerId || editTargetIds.size > 1) {
-    const wasMulti = editTargets().length > 1;
-    activeLayerId = l.id;
-    editTargetIds = new Set([l.id]);
-    if (wasMulti) toast(`編集対象を「${l.name}」のみにリセット`, "info");
-  }
-  renderLayers();
-  syncToolGuide();
-}
-
 function renderLayers(): void {
   const list = $("#layer-list");
   list.innerHTML = "";
-  [...layers].reverse().forEach((l) => {
+  [...doc.layers].reverse().forEach((l) => {
     const li = document.createElement("li");
-    li.className = `layer${l.id === activeLayerId ? " is-active" : ""}${editTargetIds.has(l.id) ? " is-target" : ""}${l.visible ? "" : " is-hidden-layer"}`;
+    li.className = `layer${l.id === doc.activeLayerId ? " is-active" : ""}${doc.editTargetIds.has(l.id) ? " is-target" : ""}${l.visible ? "" : " is-hidden-layer"}`;
     li.innerHTML = `
       <div class="layer__thumb"></div>
       <div class="layer__meta">
@@ -1868,7 +1320,7 @@ function renderLayers(): void {
       </div>
       <button class="layer__eye" title="表示 / 非表示"><i data-icon="${l.visible ? "eye" : "eye-off"}"></i></button>`;
     (li.querySelector(".layer__thumb") as HTMLElement).appendChild(cloneThumb(l.canvas));
-    li.addEventListener("click", (e) => selectLayer(l, e.ctrlKey || e.metaKey || e.shiftKey));
+    li.addEventListener("click", (e) => doc.selectLayer(l, e.ctrlKey || e.metaKey || e.shiftKey));
     (li.querySelector(".layer__eye") as HTMLElement).addEventListener("click", (e) => {
       e.stopPropagation();
       l.visible = !l.visible;
@@ -1878,8 +1330,8 @@ function renderLayers(): void {
     list.appendChild(li);
   });
   mountIcons(list);
-  $("#layer-count").textContent = String(layers.length);
-  $("#layer-target-count").textContent = String(editTargets().length);
+  $("#layer-count").textContent = String(doc.layers.length);
+  $("#layer-target-count").textContent = String(doc.editTargets().length);
 }
 
 function cloneThumb(src: HTMLCanvasElement): HTMLCanvasElement {
@@ -1892,39 +1344,14 @@ function cloneThumb(src: HTMLCanvasElement): HTMLCanvasElement {
   return c;
 }
 
-function addLayer(copy?: Layer): void {
-  const l = copy
-    ? makeLayer(`${copy.name} copy`, "paint")
-    : makeLayer(`Layer ${layers.filter((x) => x.kind === "paint").length + 1}`, "paint");
-  if (copy) l.ctx.drawImage(copy.canvas, 0, 0);
-  layers.push(l);
-  activeLayerId = l.id;
-  editTargetIds = new Set([l.id]);
-  renderLayers();
-  toast(`レイヤー「${l.name}」を追加`, "ok");
-}
-
 function bindLayers(): void {
-  $("#btn-layer-add").addEventListener("click", () => addLayer());
+  $("#btn-layer-add").addEventListener("click", () => doc.addLayer());
   $("#btn-layer-dup").addEventListener("click", () => {
-    const l = activeLayer();
-    if (l.kind === "paint") addLayer(l);
+    const l = doc.activeLayer();
+    if (l.kind === "paint") doc.addLayer(l);
     else toast("背景レイヤーは複製できません", "info");
   });
-  $("#btn-layer-del").addEventListener("click", () => {
-    const l = activeLayer();
-    const paints = layers.filter((x) => x.kind === "paint");
-    if (l.kind === "base") toast("背景レイヤーは削除できません", "info");
-    else if (paints.length <= 1) toast("ペイントレイヤーは最低1枚必要です", "info");
-    else {
-      layers = layers.filter((x) => x.id !== l.id);
-      activeLayerId = layers.filter((x) => x.kind === "paint").at(-1)!.id;
-      editTargetIds = new Set([activeLayerId]);
-      renderLayers();
-      render();
-      toast(`レイヤー「${l.name}」を削除`, "ok");
-    }
-  });
+  $("#btn-layer-del").addEventListener("click", () => doc.deleteActiveLayer());
 }
 
 /* ============ Export Modal ============ */
@@ -1944,7 +1371,7 @@ function buildMaskUrl(): string {
   tmp.width = DOC_W;
   tmp.height = DOC_H;
   const tg = tmp.getContext("2d")!;
-  for (const l of layers) {
+  for (const l of doc.layers) {
     if (l.kind !== "paint" || !l.visible) continue;
     tg.globalCompositeOperation = "source-over";
     tg.clearRect(0, 0, DOC_W, DOC_H);
@@ -1955,13 +1382,13 @@ function buildMaskUrl(): string {
     g.drawImage(tmp, 0, 0);
   }
   // 最終選択範囲を白で加算
-  if (hasSelection) g.drawImage(selMask, 0, 0);
+  if (selection.hasSelection) g.drawImage(selection.mask, 0, 0);
   return c.toDataURL("image/png");
 }
 
 function openExport(): void {
   cancelPolygon();
-  exportCompositeUrl = compositeCanvas().toDataURL("image/png");
+  exportCompositeUrl = doc.compositeCanvas().toDataURL("image/png");
   exportMaskUrl = buildMaskUrl();
   $("#exp-composite").setAttribute("src", exportCompositeUrl);
   $("#exp-mask").setAttribute("src", exportMaskUrl);
@@ -1998,8 +1425,8 @@ function postToParent(): void {
 }
 
 function bindHeaderAndModal(): void {
-  $("#btn-undo").addEventListener("click", undo);
-  $("#btn-redo").addEventListener("click", redo);
+  $("#btn-undo").addEventListener("click", () => history.undo());
+  $("#btn-redo").addEventListener("click", () => history.redo());
   $("#btn-zoomin").addEventListener("click", () => setZoom(state.zoom * 1.25));
   $("#btn-zoomout").addEventListener("click", () => setZoom(state.zoom / 1.25));
   $("#btn-zoom-label").addEventListener("click", () => setZoom(1));
@@ -2007,13 +1434,11 @@ function bindHeaderAndModal(): void {
   $("#btn-export").addEventListener("click", openExport);
 
   $("#btn-cancel").addEventListener("click", () => {
-    layers.filter((l) => l.kind === "paint").forEach((l) => l.ctx.clearRect(0, 0, DOC_W, DOC_H));
-    clearSelection();
-    Object.keys(filters.on).forEach((k) => (filters.on[k] = false));
+    doc.layers.filter((l) => l.kind === "paint").forEach((l) => l.ctx.clearRect(0, 0, DOC_W, DOC_H));
+    selection.clearSelection();
+    filters.resetValues();
     syncFilterUI();
-    undoStack.length = 0;
-    redoStack.length = 0;
-    updateUndoButtons();
+    history.clear();
     renderLayers();
     render();
     toast("編集をリセットしました", "info");
@@ -2049,11 +1474,11 @@ function syncSlider(): void {
 function onKeyDown(e: KeyboardEvent): void {
   const tag = (e.target as HTMLElement).tagName;
   if (tag === "INPUT" || tag === "TEXTAREA") return;
-  if (e.key === "Alt") altKeyDown = true;
+  if (e.key === "Alt") interaction.altKey = true;
   const k = e.key.toLowerCase();
 
-  if ((e.ctrlKey || e.metaKey) && k === "z") { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
-  if ((e.ctrlKey || e.metaKey) && k === "y") { e.preventDefault(); redo(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === "z") { e.preventDefault(); if (e.shiftKey) history.redo(); else history.undo(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === "y") { e.preventDefault(); history.redo(); return; }
   if ((e.ctrlKey || e.metaKey) && k === "a") { e.preventDefault(); selectAll(); return; }
   if ((e.ctrlKey || e.metaKey) && k === "d") { e.preventDefault(); deselect(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); openExport(); return; }
@@ -2062,29 +1487,16 @@ function onKeyDown(e: KeyboardEvent): void {
   if (e.key === " ") { e.preventDefault(); state.spacePan = true; stage.style.cursor = "grab"; return; }
   if (e.key === "Escape") {
     if (!($("#modal-export") as HTMLElement).hidden) { closeExport(); return; }
-    if (polyDrag || polyPoints.length > 0) { cancelPolygon(); return; }
-    if (lassoPath) { lassoPath = null; render(); toast("投げ縄選択を取消", "info"); return; }
-    if (preview || dragStart) { preview = null; dragStart = null; render(); return; }
+    if (interaction.polyDrag || interaction.polyPoints.length > 0) { cancelPolygon(); return; }
+    if (interaction.lassoPath) { interaction.lassoPath = null; render(); toast("投げ縄選択を取消", "info"); return; }
+    if (interaction.preview || interaction.dragStart) { interaction.preview = null; interaction.dragStart = null; render(); return; }
     // 選択範囲をクリア
-    if (hasSelection) deselect();
+    if (selection.hasSelection) deselect();
     return;
   }
   if (e.key === "Enter" && state.tool === "polygon") { closePolygon(); return; }
-  if (e.key === "Delete" && hasSelection) {
-    const targets = editTargets().filter((l) => l.kind === "paint");
-    if (!targets.length) {
-      toast("ペイントレイヤーを編集対象にしてください", "info");
-      return;
-    }
-    pushUndo();
-    targets.forEach((l) => {
-      l.ctx.save();
-      l.ctx.globalCompositeOperation = "destination-out";
-      l.ctx.drawImage(selMask, 0, 0);
-      l.ctx.restore();
-    });
-    markDirty();
-    render();
+  if (e.key === "Delete" && selection.hasSelection) {
+    deleteSelectionContents();
     return;
   }
 
@@ -2100,7 +1512,7 @@ function onKeyDown(e: KeyboardEvent): void {
 }
 
 function onKeyUp(e: KeyboardEvent): void {
-  if (e.key === "Alt") altKeyDown = false;
+  if (e.key === "Alt") interaction.altKey = false;
   if (e.key === " ") {
     state.spacePan = false;
     stage.style.cursor = TOOLS[state.tool].cursor;
@@ -2111,11 +1523,11 @@ function onKeyUp(e: KeyboardEvent): void {
 export function startApp(): void {
   mountIcons();
 
-  layers = [makeLayer("背景 (元画像)", "base", createDemoImage())];
-  const l1 = makeLayer("Layer 1", "paint");
-  layers.push(l1);
-  activeLayerId = l1.id;
-  editTargetIds = new Set([l1.id]);
+  // core からの UI 更新は hooks 経由で行う (実装をここで差し込む)
+  setHooks({ render, toast, markDirty, syncToolGuide, renderLayers, updateUndoButtons, syncFilterUI, syncZoomUI });
+  // 背景レイヤーの描画 (前処理フィルター) を FilterEngine へ委譲
+  doc.setBasePainter((g) => filters.drawBaseLayer(g));
+  doc.init(createDemoImage());
 
   resizeView();
   fitView();
@@ -2125,13 +1537,13 @@ export function startApp(): void {
   syncBrushPreview();
   syncFilterUI();
   setTool("brush");
-  startAntLoop();
+  selection.startAntLoop();
 
   // キャンバスイベント
   view.addEventListener(
     "pointerdown",
     (e) => {
-      dragMods = e.shiftKey ? "add" : e.altKey ? "sub" : null;
+      interaction.dragMods = e.shiftKey ? "add" : e.altKey ? "sub" : null;
       onPointerDown(e);
     },
   );
@@ -2139,7 +1551,7 @@ export function startApp(): void {
   view.addEventListener("pointerup", onPointerUp);
   view.addEventListener("pointercancel", onPointerUp);
   view.addEventListener("pointerleave", () => {
-    cursorPos = null;
+    interaction.cursorPos = null;
     $("#st-pos").textContent = "X: —  Y: —";
     render();
   });
