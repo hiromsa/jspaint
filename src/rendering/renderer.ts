@@ -7,7 +7,6 @@ import { filters } from "../core/filterEngine";
 import { state } from "../core/editorState";
 import { selection } from "../core/selectionStore";
 import { viewport } from "../core/viewState";
-import { DOC_H, DOC_W } from "../core/types";
 import { warpSession } from "../puppet/warpSession";
 import { drawCursor, drawDragSizeBadge, drawPuppetWarpOverlay, drawSelectionPreview, drawStrokePreview } from "./previews";
 
@@ -34,15 +33,15 @@ export function render(): void {
   vctx.save();
   vctx.translate(viewport.vw / 2 + state.panX, viewport.vh / 2 + state.panY);
   vctx.scale(state.zoom, state.zoom);
-  vctx.translate(-DOC_W / 2, -DOC_H / 2);
+  vctx.translate(-doc.width / 2, -doc.height / 2);
 
   // チェッカーボード (透明部分の表現)
   const chk = 8;
   vctx.fillStyle = "#1e1e1e";
-  vctx.fillRect(0, 0, DOC_W, DOC_H);
+  vctx.fillRect(0, 0, doc.width, doc.height);
   vctx.fillStyle = "#2a2a2a";
-  for (let y = 0; y < DOC_H / chk; y++) {
-    for (let x = 0; x < DOC_W / chk; x++) {
+  for (let y = 0; y < doc.height / chk; y++) {
+    for (let x = 0; x < doc.width / chk; x++) {
       if ((x + y) % 2 === 0) vctx.fillRect(x * chk, y * chk, chk, chk);
     }
   }
@@ -69,7 +68,7 @@ export function render(): void {
     vctx.save();
     vctx.translate(viewport.vw / 2 + state.panX, viewport.vh / 2 + state.panY);
     vctx.scale(state.zoom, state.zoom);
-    vctx.translate(-DOC_W / 2, -DOC_H / 2);
+    vctx.translate(-doc.width / 2, -doc.height / 2);
     vctx.imageSmoothingEnabled = false;
     vctx.drawImage(selection.antsBlack, 0, 0);
     vctx.drawImage(selection.antsWhite[selection.antPhase % 4], 0, 0);

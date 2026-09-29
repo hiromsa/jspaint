@@ -11,7 +11,6 @@ import { selection } from "../core/selectionStore";
 import { state } from "../core/editorState";
 import { TOOLS } from "../core/toolDefs";
 import { screenToDoc, setZoom } from "../core/viewState";
-import { DOC_H, DOC_W } from "../core/types";
 import { $ } from "../ui/dom";
 import { markDirty, toast } from "../ui/feedback";
 import { render, view } from "../rendering/renderer";
@@ -179,7 +178,7 @@ function onPointerMove(e: PointerEvent): void {
   const d = screenToDoc(s.x, s.y);
   interaction.cursorPos = d;
 
-  const inside = d.x >= 0 && d.y >= 0 && d.x < DOC_W && d.y < DOC_H;
+  const inside = d.x >= 0 && d.y >= 0 && d.x < doc.width && d.y < doc.height;
   $("#st-pos").textContent = inside ? `X: ${Math.floor(d.x)}  Y: ${Math.floor(d.y)}` : "X: —  Y: —";
 
   if (interaction.panning) {

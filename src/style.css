@@ -253,6 +253,30 @@ svg { display: block; }
   pointer-events: none;
 }
 
+/* ---------- 画像ドロップオーバーレイ ---------- */
+.drop-overlay {
+  position: absolute; inset: 0; z-index: 40;
+  display: none; align-items: center; justify-content: center;
+  background: rgba(10, 10, 10, 0.68);
+  border: 2px dashed var(--accent);
+  backdrop-filter: blur(2px);
+  pointer-events: none; /* drop イベントは workspace 側で受ける */
+}
+.workspace.is-dragover .drop-overlay { display: flex; }
+.drop-overlay__card {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 22px; font-size: 13px; font-weight: 600; color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: var(--shadow-2);
+}
+.drop-overlay__card svg { width: 18px; height: 18px; color: var(--accent); }
+
+/* ---------- ホストモード (standalone / embed) ----------
+   embed (親アプリ埋め込み) ではファイルの開く/保存など
+   単体運用専用の UI を data-standalone-only 属性で非表示にする。 */
+html[data-host-mode="embed"] [data-standalone-only] { display: none !important; }
+
 /* ============================================================
    Properties Panel (w-72)
    ============================================================ */

@@ -14,6 +14,8 @@ import { KEY_TOOL, TOOLS } from "../core/toolDefs";
 import { cancelPolygon, closePolygon } from "./pointer";
 import { setTool, syncSlider, swapColors } from "../ui/panels";
 import { closeExport, openExport } from "../ui/exportModal";
+import { imageIOActions } from "../ui/imageIO";
+import { hostMode } from "../ui/hostMode";
 import { warpSession } from "../puppet/warpSession";
 
 /** window へ keydown / keyup を配線する */
@@ -33,6 +35,14 @@ function onKeyDown(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && k === "a") { e.preventDefault(); selectAll(); return; }
   if ((e.ctrlKey || e.metaKey) && k === "d") { e.preventDefault(); deselect(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); openExport(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && k === "c") { e.preventDefault(); imageIOActions.copyComposite(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === "s") {
+    e.preventDefault();
+    // 保存は standalone モード専用。embed (親アプリ埋め込み) では「完了」で親へ返す
+    if (hostMode === "standalone") imageIOActions.saveComposite();
+    else hooks.toast("埋め込みモードでは「完了 (Ctrl+Enter)」で親アプリへ返してください", "info");
+    return;
+  }
   if (e.altKey && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); fillSelection(); return; }
 
   if (e.key === " ") { e.preventDefault(); state.spacePan = true; $("#stage").style.cursor = "grab"; return; }

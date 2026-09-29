@@ -4,7 +4,10 @@
  * このファイル自身はどのモジュールにも依存しない。
  */
 
-/** ドキュメント (ステージ) の解像度 */
+/**
+ * 既定の初期ドキュメントサイズ (デモ画像生成に使用)。
+ * ドキュメント自体は可変 — 実寸は DocumentStore の width / height を参照すること。
+ */
 export const DOC_W = 640;
 export const DOC_H = 640;
 
@@ -61,4 +64,6 @@ export interface EditorHooks {
   updateUndoButtons(): void;
   syncFilterUI(): void;
   syncZoomUI(): void;
+  /** ヘッダー等のドキュメント情報 (ファイル名 / サイズ) を UI へ反映 */
+  syncDocInfo(): void;
 }

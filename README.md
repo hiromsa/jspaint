@@ -8,9 +8,11 @@ UI仕様の詳細は [docs/specification/ui.md](docs/specification/ui.md) を参
 
 ```bash
 npm install
-npm run dev        # 開発サーバ (http://localhost:5173)
-npm run build      # dist/index.html — 単一HTML (依存なし・file:// ダブルクリックで起動可)
-npm run typecheck  # tsc --noEmit
+npm run dev          # 開発サーバ (http://localhost:5173)
+npm run build        # dist/index.html — 単一HTML (依存なし・file:// ダブルクリックで起動可)
+npm run typecheck    # tsc --noEmit
+npm run test:puppet  # パペットワープ pure ロジックの単体検証 (node)
+npm run test:imageio # 画像入出力 & ホストモードの E2E 検証 (ヘッドレス Chrome/Edge, 要 build 済み)
 ```
 
 ビルド成果物は `dist/index.html` の **1ファイルのみ**。`vite-plugin-singlefile` により JS/CSS がすべてインライン化されるため、
@@ -20,9 +22,9 @@ npm run typecheck  # tsc --noEmit
 
 | エリア | 内容 |
 |---|---|
-| Header | Undo/Redo、ズーム (25%〜800%)、フィット、ドキュメント情報、キャンセル/完了 |
+| Header | **開く/保存/クリップボードコピー**、Undo/Redo、ズーム (5%〜800%)、フィット、ドキュメント情報、キャンセル/完了 |
 | Toolbox | ブラシ・消しゴム・バケツ / 指先・**膨張**・覆い焼き・焼き込み・フィルターペン / 直線・矩形・円 / 矩形・投げ縄・多角形・魔法の杖・選択ペン選択 / スポイト・手のひら + 前景/背景色 |
-| Workspace | チェッカーボード + 640×640 ステージ。パン (Space/中ボタン/手のひら)、ズーム (ホイール) |
+| Workspace | チェッカーボード + **可変サイズのステージ** (画像読み込みで実寸に追従)。パン (Space/中ボタン/手のひら)、ズーム (ホイール)、**画像のドラッグ&ドロップ読み込み** |
 | Properties | ①ツール設定 (サイズ・不透明度・許容度・選択合成モード) ②前処理フィルター ③レイヤー |
 | StatusBar | ツール名、X/Y座標、操作ガイド、バージョン |
 | Export Modal | 合成画像 & 白黒マスクのプレビュー、PNG保存、`postMessage({ type: 'JSPAINT_EXPORT', ... })` |
@@ -43,16 +45,31 @@ npm run typecheck  # tsc --noEmit
 - レイヤー (背景=フィルター適用対象 + ペイントレイヤー)、可視性・複製・削除
 - Undo / Redo (Ctrl+Z / Ctrl+Y)
 - エクスポート: 背景フィルター+全レイヤーの合成画像、黒背景+白二値のマスク画像
+- **画像入出力**: 「開く」(file dialog) / ドラッグ&ドロップ / `Ctrl+V` で画像を読み込み
+  (ドキュメントは読み込み画像の実寸に変わり、選択・履歴・フィルターをリセット)、
+  「保存」(合成画像 PNG) / 「コピー」(クリップボードへ `image/png`)
+- **ホストモード**: `?mode=embed` (iframe 自動判定あり) で埋め込まれた場合は「開く/保存」を非表示にし、
+  クリップボード・ペースト・postMessage 連携に専念する (standalone では全機能を表示)
 
 ### ショートカット
 
 `B/E/G/S/V/D/J/F/L/U/O/M/Q/P/W/K/I/H` ツール切替 · `X` 色入替 · `[` `]` ブラシサイズ ·
 `Ctrl+Z/Y` Undo/Redo · `Ctrl+A` すべて選択 · `Ctrl+D` 選択解除 · `Alt+Delete` 選択範囲を塗りつぶし ·
-`Delete` 選択範囲を消去 · `0` 100% · `1` フィット · `Ctrl+Enter` エクスポート
+`Delete` 選択範囲を消去 · `0` 100% · `1` フィット · `Ctrl+Enter` エクスポート ·
+`Ctrl+V` 画像を貼り付け · `Ctrl+S` PNG保存 (standalone) · `Ctrl+Shift+C` クリップボードへコピー
 
 詳細な仕様は [docs/specification/ui.md](docs/specification/ui.md)、進捗は [docs/PROGRESS.md](docs/PROGRESS.md) を参照。
 
 ## 親アプリ連携 (仕様)
+
+### ホストモード
+
+| モード | 指定方法 | 挙動 |
+|---|---|---|
+| standalone | `?mode=standalone` / iframe 外 (既定) | 全機能 (開く・保存・コピー) を表示 |
+| embed | `?mode=embed` / iframe 内自動判定 | 「開く」「保存」を非表示。画像は親アプリから受け取る前提 |
+
+### エクスポート
 
 iframe で埋め込み、「完了 (Export)」→「親アプリへ送信」で次のメッセージを送信します:
 
@@ -64,16 +81,20 @@ window.parent.postMessage({
 }, "*");
 ```
 
-単体 (file:// 直開き) の場合は iframe 未検出を検出し、PNG ダウンロードへ誘導します。
+standalone (file:// 直開き) の場合は iframe 未検出を検出し、PNG ダウンロードへ誘導します。
 
 ## 構成
 
 ```
-index.html          … UI骨格
-src/main.ts         … エントリ
-src/app.ts          … 状態・描画エンジン・UI配線
-src/icons.ts        … lucide アイコン (インラインSVG)
-src/demo.ts         … 単体動作用デモ画像 (Canvas生成)
-src/style.css       … ダークテーマ (ui.md スタイルガイド準拠)
-docs/specification/ … 仕様書
+index.html              … UI骨格
+src/main.ts             … エントリ
+src/app.ts              … 生成と配線
+src/core/               … ドメインロジック (ストア / 画像読み込み / フィルター / 選択 / Undo / ビュー変換)
+src/painting/           … 描画系ツール
+src/puppet/             … パペットワープ (メッシュ変形)
+src/rendering/          … キャンバス描画
+src/interaction/        … ポインタ・キーボード入力
+src/ui/                 … DOM 配線 (パネル / 画像入出力 / ホストモード / エクスポート)
+src/assets/             … アイコン・デモ画像
+docs/specification/     … 仕様書
 ```

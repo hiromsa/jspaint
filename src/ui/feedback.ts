@@ -24,3 +24,13 @@ export function markDirty(): void {
   st.classList.remove("doc-status--ready");
   st.classList.add("doc-status--editing");
 }
+
+/** 画像を読み込み直した際などにドキュメント状態を「READY」へ戻す */
+export function markClean(): void {
+  state.dirty = false;
+  $("#doc-dot").classList.remove("doc-dot--editing");
+  const st = $("#doc-status");
+  st.textContent = "READY";
+  st.classList.add("doc-status--ready");
+  st.classList.remove("doc-status--editing");
+}

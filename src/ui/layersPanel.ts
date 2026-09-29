@@ -32,7 +32,7 @@ export function renderLayers(): void {
       <div class="layer__thumb"></div>
       <div class="layer__meta">
         <div class="layer__name">${l.name} ${layerBadgeHTML(l)}</div>
-        <div class="layer__sub">${l.kind === "base" ? "元画像 · 前処理フィルター適用" : "640 × 640 · normal"}</div>
+        <div class="layer__sub">${l.kind === "base" ? "元画像 · 前処理フィルター適用" : `${doc.width} × ${doc.height} · normal`}</div>
       </div>
       <button class="layer__eye" title="表示 / 非表示"><i data-icon="${l.visible ? "eye" : "eye-off"}"></i></button>`;
     (li.querySelector(".layer__thumb") as HTMLElement).appendChild(cloneThumb(l.canvas));

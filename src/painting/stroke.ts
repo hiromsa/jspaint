@@ -4,7 +4,6 @@
  */
 import { state } from "../core/editorState";
 import { selection } from "../core/selectionStore";
-import { DOC_H, DOC_W } from "../core/types";
 
 export function drawLineSeg(ctx: CanvasRenderingContext2D, a: { x: number; y: number }, b: { x: number; y: number }): void {
   ctx.beginPath();
@@ -62,8 +61,9 @@ export function paintStroke(
   }
   const bx = Math.max(0, Math.floor(Math.min(x0, x1) - pad));
   const by = Math.max(0, Math.floor(Math.min(y0, y1) - pad));
-  const br = Math.min(DOC_W, Math.ceil(Math.max(x0, x1) + pad));
-  const bb = Math.min(DOC_H, Math.ceil(Math.max(y0, y1) + pad));
+  // 対象レイヤー (ctx) の実寸を境界にする (ドキュメントは可変)
+  const br = Math.min(ctx.canvas.width, Math.ceil(Math.max(x0, x1) + pad));
+  const bb = Math.min(ctx.canvas.height, Math.ceil(Math.max(y0, y1) + pad));
   const bw = br - bx;
   const bh = bb - by;
   if (bw <= 0 || bh <= 0) return;

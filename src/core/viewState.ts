@@ -1,9 +1,10 @@
 /**
  * core/viewState.ts — ビューポートとズーム / パン / 座標変換
  */
+import { doc } from "./documentStore";
 import { state } from "./editorState";
 import { hooks } from "./hooks";
-import { DOC_H, DOC_W, type Pt } from "./types";
+import type { Pt } from "./types";
 
 /** ワークスペースのビューポート (CSS px)。renderer の resizeView() が更新する */
 export const viewport = {
@@ -20,17 +21,17 @@ export const viewport = {
  */
 export function screenToDoc(sx: number, sy: number): Pt {
   return {
-    x: (sx - viewport.vw / 2 - state.panX) / state.zoom + DOC_W / 2,
-    y: (sy - viewport.vh / 2 - state.panY) / state.zoom + DOC_H / 2,
+    x: (sx - viewport.vw / 2 - state.panX) / state.zoom + doc.width / 2,
+    y: (sy - viewport.vh / 2 - state.panY) / state.zoom + doc.height / 2,
   };
 }
 
 export function docToScreenX(dx: number): number {
-  return viewport.vw / 2 + state.panX + (dx - DOC_W / 2) * state.zoom;
+  return viewport.vw / 2 + state.panX + (dx - doc.width / 2) * state.zoom;
 }
 
 export function docToScreenY(dy: number): number {
-  return viewport.vh / 2 + state.panY + (dy - DOC_H / 2) * state.zoom;
+  return viewport.vh / 2 + state.panY + (dy - doc.height / 2) * state.zoom;
 }
 
 /** ズーム倍率を変更する (cx / cy = 中心に置く画面座標・省略時はビュー中央) */
@@ -49,7 +50,7 @@ export function setZoom(z: number, cx?: number, cy?: number): void {
 
 /** ドキュメント全体をワークスペースに収める */
 export function fitView(): void {
-  state.zoom = Math.min((viewport.vw - 56) / DOC_W, (viewport.vh - 56) / DOC_H);
+  state.zoom = Math.min((viewport.vw - 56) / doc.width, (viewport.vh - 56) / doc.height);
   state.panX = 0;
   state.panY = 0;
   hooks.syncZoomUI();

@@ -8,11 +8,11 @@ import { history } from "../core/historyStack";
 import { selection } from "../core/selectionStore";
 import { state } from "../core/editorState";
 import { fitView, setZoom } from "../core/viewState";
-import { DOC_H, DOC_W } from "../core/types";
 import { cancelPolygon } from "../interaction/pointer";
 import { render } from "../rendering/renderer";
 import { renderLayers } from "../ui/layersPanel";
 import { syncFilterUI } from "./filtersPanel";
+import { hostMode } from "./hostMode";
 import { $, $$ } from "./dom";
 import { toast } from "./feedback";
 
@@ -20,26 +20,28 @@ let exportCompositeUrl = "";
 let exportMaskUrl = "";
 
 function buildMaskUrl(): string {
+  const w = doc.width;
+  const h = doc.height;
   const c = document.createElement("canvas");
-  c.width = DOC_W;
-  c.height = DOC_H;
+  c.width = w;
+  c.height = h;
   const g = c.getContext("2d")!;
   g.fillStyle = "#000000";
-  g.fillRect(0, 0, DOC_W, DOC_H);
+  g.fillRect(0, 0, w, h);
 
   // ペイントレイヤーを白で加算
   const tmp = document.createElement("canvas");
-  tmp.width = DOC_W;
-  tmp.height = DOC_H;
+  tmp.width = w;
+  tmp.height = h;
   const tg = tmp.getContext("2d")!;
   for (const l of doc.layers) {
     if (l.kind !== "paint" || !l.visible) continue;
     tg.globalCompositeOperation = "source-over";
-    tg.clearRect(0, 0, DOC_W, DOC_H);
+    tg.clearRect(0, 0, w, h);
     tg.drawImage(l.canvas, 0, 0);
     tg.globalCompositeOperation = "source-in";
     tg.fillStyle = "#ffffff";
-    tg.fillRect(0, 0, DOC_W, DOC_H);
+    tg.fillRect(0, 0, w, h);
     g.drawImage(tmp, 0, 0);
   }
   // 最終選択範囲を白で加算
@@ -55,7 +57,7 @@ export function openExport(): void {
   $("#exp-mask").setAttribute("src", exportMaskUrl);
   const info = $("#export-info");
   info.classList.remove("is-sent", "is-error");
-  info.textContent = `$ JSPAINT_EXPORT · ${DOC_W}×${DOC_H} · mask = 描画要素 + 最終選択範囲 → 待機中…`;
+  info.textContent = `$ JSPAINT_EXPORT · ${doc.width}×${doc.height} · mask = 描画要素 + 最終選択範囲 → 待機中…`;
   ($("#modal-export") as HTMLElement).hidden = false;
 }
 
@@ -63,7 +65,8 @@ export function closeExport(): void {
   ($("#modal-export") as HTMLElement).hidden = true;
 }
 
-function downloadDataUrl(name: string, url: string): void {
+/** data URL をファイルダウンロードする (保存ボタン / エクスポートモーダル共用) */
+export function downloadDataUrl(name: string, url: string): void {
   const a = document.createElement("a");
   a.href = url;
   a.download = name;
@@ -79,9 +82,9 @@ function postToParent(): void {
     info.classList.add("is-sent");
     toast("親アプリへ送信しました", "ok");
   } else {
-    info.textContent = "⚠ 単体モード (iframe未検出) — 各PNG保存ボタンでダウンロードしてください";
+    info.textContent = `⚠ standalone モード (iframe未検出 / mode=${hostMode}) — 各PNG保存ボタンでダウンロードしてください`;
     info.classList.add("is-error");
-    toast("単体モードのため PNG 保存で代替します", "info");
+    toast("standalone モードのため PNG 保存で代替します", "info");
   }
 }
 
@@ -95,7 +98,7 @@ export function bindHeaderAndModal(): void {
   $("#btn-export").addEventListener("click", openExport);
 
   $("#btn-cancel").addEventListener("click", () => {
-    doc.layers.filter((l) => l.kind === "paint").forEach((l) => l.ctx.clearRect(0, 0, DOC_W, DOC_H));
+    doc.layers.filter((l) => l.kind === "paint").forEach((l) => l.ctx.clearRect(0, 0, l.canvas.width, l.canvas.height));
     selection.clearSelection();
     filters.resetValues();
     syncFilterUI();

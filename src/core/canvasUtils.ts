@@ -1,11 +1,11 @@
 /**
  * core/canvasUtils.ts — canvas に対する純粋なユーティリティ
  * エディタの状態に依存しない (引数で渡された canvas / 値のみを扱う)。
+ * ドキュメントは可変サイズのため、サイズは常に引数または対象 canvas から受け取る。
  */
-import { DOC_H, DOC_W } from "./types";
 
-/** 空の canvas を生成 (既定はドキュメント解像度) */
-export function createCanvas(w: number = DOC_W, h: number = DOC_H): HTMLCanvasElement {
+/** 空の canvas を生成 */
+export function createCanvas(w: number, h: number): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = w;
   c.height = h;
@@ -46,18 +46,21 @@ export function hexA(hex: string, a: number): string {
 }
 
 /**
- * スキャンライン flood fill。合成画像上の (cx, cy) を起点に、
+ * スキャンライン flood fill。composite 上の (cx, cy) を起点に、
  * 許容度以内の類似色領域を白二値マスクcanvasとして返す。
+ * サイズは composite 自身から取得する (ドキュメントは可変)。
  */
 export function floodMask(composite: HTMLCanvasElement, cx: number, cy: number, tolerance: number): HTMLCanvasElement {
-  const img = composite.getContext("2d")!.getImageData(0, 0, DOC_W, DOC_H);
+  const w = composite.width;
+  const h = composite.height;
+  const img = composite.getContext("2d")!.getImageData(0, 0, w, h);
   const d = img.data;
-  const sx = Math.max(0, Math.min(DOC_W - 1, cx | 0));
-  const sy = Math.max(0, Math.min(DOC_H - 1, cy | 0));
-  const si = sy * DOC_W + sx;
+  const sx = Math.max(0, Math.min(w - 1, cx | 0));
+  const sy = Math.max(0, Math.min(h - 1, cy | 0));
+  const si = sy * w + sx;
   const r0 = d[si * 4], g0 = d[si * 4 + 1], b0 = d[si * 4 + 2];
   const thresh = (tolerance / 100) * 383;
-  const mask = new Uint8Array(DOC_W * DOC_H);
+  const mask = new Uint8Array(w * h);
   const match = (i: number): boolean => {
     const dr = d[i * 4] - r0, dg = d[i * 4 + 1] - g0, db = d[i * 4 + 2] - b0;
     return Math.abs(dr) + Math.abs(dg) + Math.abs(db) <= thresh;
@@ -67,20 +70,20 @@ export function floodMask(composite: HTMLCanvasElement, cx: number, cy: number, 
   while (stack.length) {
     const y = stack.pop()!;
     let x = stack.pop()!;
-    let i = y * DOC_W + x;
+    let i = y * w + x;
     while (x >= 0 && !mask[i] && match(i)) { x--; i--; }
     x++; i++;
     let up = false;
     let down = false;
-    while (x < DOC_W && !mask[i] && match(i)) {
+    while (x < w && !mask[i] && match(i)) {
       mask[i] = 1;
       if (y > 0) {
-        const ui = i - DOC_W;
+        const ui = i - w;
         const m = !mask[ui] && match(ui);
         if (m && !up) { stack.push(x, y - 1); up = true; } else if (!m) up = false;
       }
-      if (y < DOC_H - 1) {
-        const di = i + DOC_W;
+      if (y < h - 1) {
+        const di = i + w;
         const m = !mask[di] && match(di);
         if (m && !down) { stack.push(x, y + 1); down = true; } else if (!m) down = false;
       }
@@ -88,9 +91,9 @@ export function floodMask(composite: HTMLCanvasElement, cx: number, cy: number, 
     }
   }
 
-  const out = createCanvas();
+  const out = createCanvas(w, h);
   const oc = out.getContext("2d")!;
-  const od = oc.createImageData(DOC_W, DOC_H);
+  const od = oc.createImageData(w, h);
   for (let i = 0; i < mask.length; i++) {
     if (mask[i]) {
       od.data[i * 4] = 255;

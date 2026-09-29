@@ -6,7 +6,7 @@ import { clone } from "./canvasUtils";
 import { doc, DocumentStore } from "./documentStore";
 import { hooks } from "./hooks";
 import { selection, SelectionStore } from "./selectionStore";
-import { DOC_H, DOC_W, type Layer } from "./types";
+import type { Layer } from "./types";
 
 /** 1レイヤー分のスナップショット (複数レイヤー編集対象に対応) */
 export interface LayerSnap {
@@ -94,12 +94,12 @@ export class HistoryStack {
     for (const { layerId, layer } of s.layers) {
       const t = this.documentStore.layers.find((x) => x.id === layerId);
       if (t) {
-        t.ctx.clearRect(0, 0, DOC_W, DOC_H);
+        t.ctx.clearRect(0, 0, t.canvas.width, t.canvas.height);
         t.ctx.drawImage(layer, 0, 0);
       }
     }
     const sel = this.selectionStore;
-    sel.ctx.clearRect(0, 0, DOC_W, DOC_H);
+    sel.ctx.clearRect(0, 0, sel.mask.width, sel.mask.height);
     if (s.hasSel) sel.ctx.drawImage(s.sel, 0, 0);
     sel.hasSelection = s.hasSel;
     sel.rebuildAnts();

@@ -4,7 +4,7 @@
  */
 import { state } from "../core/editorState";
 import { selection } from "../core/selectionStore";
-import { DOC_H, DOC_W, type Layer, type Pt } from "../core/types";
+import type { Layer, Pt } from "../core/types";
 
 /* --- 円形フォールオフ (覆い焼き / 焼き込み / 膨張の共通) --- */
 /** 円形フォールオフ: t = 0 (中心) → 1 (エッジ)。中心55%は全強度、外周へ cos フェード */
@@ -44,8 +44,8 @@ export function smudgeStamp(target: Layer, from: Pt, to: Pt): void {
   const sy = from.y - r;
   const cx0 = Math.max(0, Math.floor(sx));
   const cy0 = Math.max(0, Math.floor(sy));
-  const cx1 = Math.min(DOC_W, Math.ceil(sx + size));
-  const cy1 = Math.min(DOC_H, Math.ceil(sy + size));
+  const cx1 = Math.min(target.canvas.width, Math.ceil(sx + size));
+  const cy1 = Math.min(target.canvas.height, Math.ceil(sy + size));
   if (cx1 > cx0 && cy1 > cy0) {
     g.globalCompositeOperation = "source-in";
     g.drawImage(target.canvas, cx0, cy0, cx1 - cx0, cy1 - cy0, cx0 - sx, cy0 - sy, cx1 - cx0, cy1 - cy0);
@@ -80,8 +80,8 @@ export function toneStamp(target: Layer, mode: "dodge" | "burn", at: Pt): void {
   const y0 = Math.floor(at.y - r);
   const sx = Math.max(0, x0);
   const sy = Math.max(0, y0);
-  const ex = Math.min(DOC_W, x0 + size + 1);
-  const ey = Math.min(DOC_H, y0 + size + 1);
+  const ex = Math.min(target.canvas.width, x0 + size + 1);
+  const ey = Math.min(target.canvas.height, y0 + size + 1);
   if (ex <= sx || ey <= sy) return;
   const ctx = target.ctx;
   const img = ctx.getImageData(sx, sy, ex - sx, ey - sy);

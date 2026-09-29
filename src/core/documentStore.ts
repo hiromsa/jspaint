@@ -14,6 +14,12 @@ export class DocumentStore {
   /** 編集対象レイヤー (描画 / レタッチ系ツールが作用する対象)。常に activeLayerId を含む */
   editTargetIds = new Set<number>();
 
+  /** ドキュメントの実寸 (可変 — 画像読み込み時に変わる) */
+  width = DOC_W;
+  height = DOC_H;
+  /** ドキュメント名 (ヘッダー表示と保存ファイル名の基底) */
+  name = "sample_photo.png";
+
   private basePainter: ((g: CanvasRenderingContext2D) => void) | null = null;
 
   /** 背景レイヤー (元画像) の描画処理を差し込む */
@@ -42,8 +48,8 @@ export class DocumentStore {
 
   makeLayer(name: string, kind: "base" | "paint", image?: HTMLCanvasElement): Layer {
     const canvas = document.createElement("canvas");
-    canvas.width = DOC_W;
-    canvas.height = DOC_H;
+    canvas.width = this.width;
+    canvas.height = this.height;
     // レタッチ系ツール (覆い焼き/焼き込み) は getImageData を頻用するため CPU 側バッファを優先
     const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
     if (image) ctx.drawImage(image, 0, 0);
@@ -51,7 +57,10 @@ export class DocumentStore {
   }
 
   /** ベース画像 (デモ or 読み込み画像) でドキュメントを初期化する */
-  init(baseImage: HTMLCanvasElement): void {
+  init(baseImage: HTMLCanvasElement, name = "sample_photo.png"): void {
+    this.width = baseImage.width;
+    this.height = baseImage.height;
+    this.name = name;
     this.layers = [this.makeLayer("背景 (元画像)", "base", baseImage)];
     const l1 = this.makeLayer("Layer 1", "paint");
     this.layers.push(l1);
@@ -59,16 +68,25 @@ export class DocumentStore {
     this.editTargetIds = new Set([l1.id]);
   }
 
+  /**
+   * 背景画像を差し替え、ドキュメントサイズを読み込み画像に合わせる。
+   * 既存のペイントレイヤーは空の状態で再作成される (選択・履歴・フィルターの
+   * リセットは documentOps.applyBaseImage が一括して行う)。
+   */
+  replaceBaseImage(baseImage: HTMLCanvasElement, name?: string): void {
+    this.init(baseImage, name ?? this.name);
+  }
+
   /** 全ペイントレイヤーをクリア (キャンセル処理) */
   clearPaintLayers(): void {
-    for (const l of this.paintLayers()) l.ctx.clearRect(0, 0, DOC_W, DOC_H);
+    for (const l of this.paintLayers()) l.ctx.clearRect(0, 0, this.width, this.height);
   }
 
   /** 背景レイヤー (前処理フィルター適用) + 可視ペイントレイヤーを合成する */
   compositeCanvas(): HTMLCanvasElement {
     const c = document.createElement("canvas");
-    c.width = DOC_W;
-    c.height = DOC_H;
+    c.width = this.width;
+    c.height = this.height;
     const g = c.getContext("2d")!;
     if (this.basePainter) this.basePainter(g);
     for (const l of this.layers) {
@@ -79,7 +97,7 @@ export class DocumentStore {
 
   /** 合成画像から色を取得 */
   pickColor(x: number, y: number): string | null {
-    if (x < 0 || y < 0 || x >= DOC_W || y >= DOC_H) return null;
+    if (x < 0 || y < 0 || x >= this.width || y >= this.height) return null;
     const d = this.compositeCanvas().getContext("2d")!.getImageData(x | 0, y | 0, 1, 1).data;
     const to2 = (n: number) => n.toString(16).padStart(2, "0");
     return `#${to2(d[0])}${to2(d[1])}${to2(d[2])}`;

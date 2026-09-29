@@ -62,7 +62,7 @@ export function renderWarped(
   mesh: PuppetMesh,
   deformed: readonly Pt[],
 ): HTMLCanvasElement {
-  const out = createCanvas();
+  const out = createCanvas(source.width, source.height);
   const g = out.getContext("2d")!;
   g.imageSmoothingQuality = "high";
   for (const { indices } of mesh.triangles) {

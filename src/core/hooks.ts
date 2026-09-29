@@ -14,6 +14,7 @@ export const hooks: EditorHooks = {
   updateUndoButtons: () => {},
   syncFilterUI: () => {},
   syncZoomUI: () => {},
+  syncDocInfo: () => {},
 };
 
 /** アプリ起動時に UI 実装へ差し替える */

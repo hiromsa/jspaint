@@ -8,7 +8,6 @@ import { history } from "./historyStack";
 import { hooks } from "./hooks";
 import { selection } from "./selectionStore";
 import { state } from "./editorState";
-import { DOC_H, DOC_W } from "./types";
 
 /** 選択範囲を描画色で塗りつぶし */
 export function fillSelection(): void {
@@ -62,6 +61,6 @@ export function deselect(): void {
 
 /** キャンバス全体を選択 (Ctrl+A) */
 export function selectAll(): void {
-  selection.applySelection((g) => g.fillRect(0, 0, DOC_W, DOC_H), "new");
+  selection.applySelection((g) => g.fillRect(0, 0, doc.width, doc.height), "new");
   hooks.toast("キャンバス全体を選択", "info");
 }

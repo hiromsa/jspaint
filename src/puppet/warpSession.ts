@@ -10,7 +10,7 @@ import { state } from "../core/editorState";
 import { hooks } from "../core/hooks";
 import { history } from "../core/historyStack";
 import { selection } from "../core/selectionStore";
-import { DOC_H, DOC_W, type Pt, type ToolId } from "../core/types";
+import type { Pt, ToolId } from "../core/types";
 import { computeDeformedVertices } from "./deformer";
 import { buildMesh, inverseDeformPoint, type PuppetMesh, type PuppetPin } from "./mesh";
 import { renderWarped } from "./warpPaint";
@@ -71,7 +71,7 @@ class PuppetWarpSession {
         history.pushUndo(targets);
         for (const l of targets) {
           const preview = this.previews.get(l.id)!;
-          l.ctx.clearRect(0, 0, DOC_W, DOC_H);
+          l.ctx.clearRect(0, 0, l.canvas.width, l.canvas.height);
           l.ctx.drawImage(preview, 0, 0);
         }
         hooks.markDirty();
@@ -170,14 +170,14 @@ class PuppetWarpSession {
     const targets = doc.editTargets();
     if (targets.length === 0) return null;
     // 編集対象レイヤーの合成上の不透明領域を変形対象にする
-    const opaque = createCanvas();
+    const opaque = createCanvas(doc.width, doc.height);
     const og = opaque.getContext("2d")!;
     for (const l of targets) og.drawImage(l.canvas, 0, 0);
-    const od = og.getImageData(0, 0, DOC_W, DOC_H).data;
-    const sd = selection.hasSelection ? selection.ctx.getImageData(0, 0, DOC_W, DOC_H).data : null;
+    const od = og.getImageData(0, 0, doc.width, doc.height).data;
+    const sd = selection.hasSelection ? selection.ctx.getImageData(0, 0, doc.width, doc.height).data : null;
     const contains = (x: number, y: number): boolean => {
-      if (x < 0 || y < 0 || x >= DOC_W || y >= DOC_H) return false;
-      const i = ((y | 0) * DOC_W + (x | 0)) * 4;
+      if (x < 0 || y < 0 || x >= doc.width || y >= doc.height) return false;
+      const i = ((y | 0) * doc.width + (x | 0)) * 4;
       return od[i + 3] > 0 && (sd === null || sd[i + 3] > 0);
     };
     return buildMesh(contains, state.puppetSpacing);
@@ -209,12 +209,12 @@ class PuppetWarpSession {
         continue;
       }
       // 選択範囲がある場合: 元画像の選択内を空けて、変形結果の選択内部分を重ねる
-      const clipped = createCanvas();
+      const clipped = createCanvas(source.width, source.height);
       const cg = clipped.getContext("2d")!;
       cg.drawImage(warped, 0, 0);
       cg.globalCompositeOperation = "destination-in";
       cg.drawImage(selection.mask, 0, 0);
-      const out = createCanvas();
+      const out = createCanvas(source.width, source.height);
       const g = out.getContext("2d")!;
       g.drawImage(source, 0, 0);
       g.globalCompositeOperation = "destination-out";

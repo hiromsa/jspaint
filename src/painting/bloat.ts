@@ -9,7 +9,7 @@ import { hooks } from "../core/hooks";
 import { interaction } from "../core/interactionState";
 import { selection } from "../core/selectionStore";
 import { toneFalloff } from "./retouch";
-import { DOC_H, DOC_W, type Layer, type Pt } from "../core/types";
+import type { Layer, Pt } from "../core/types";
 
 /** 1 スタンプで中心付近のサンプル距離を縮める最大率。ドラッグ中はスタンプが繰り返し適用され、徐々に膨らむ */
 const BLOAT_PULL = 0.32;
@@ -29,8 +29,8 @@ export function bloatStamp(target: Layer, at: Pt, sign: 1 | -1, pull: number = B
   const y0 = Math.floor(at.y - r);
   const sx = Math.max(0, x0);
   const sy = Math.max(0, y0);
-  const ex = Math.min(DOC_W, x0 + size + 1);
-  const ey = Math.min(DOC_H, y0 + size + 1);
+  const ex = Math.min(target.canvas.width, x0 + size + 1);
+  const ey = Math.min(target.canvas.height, y0 + size + 1);
   if (ex <= sx || ey <= sy) return;
   const ctx = target.ctx;
   const w = ex - sx;

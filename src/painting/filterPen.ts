@@ -3,25 +3,32 @@
  * フィルタータブで有効中のフィルターを、ペンでなぞった範囲のピクセルへ直接適用する。
  * 1ストローク内は開始時の画像を基準にするため、重ね塗りしてもフィルターが二重に効かない。
  */
-import { clone, createCanvas } from "../core/canvasUtils";
+import { clone } from "../core/canvasUtils";
 import { doc } from "../core/documentStore";
 import { filters } from "../core/filterEngine";
 import { selection } from "../core/selectionStore";
 import { state } from "../core/editorState";
 import { drawLineSeg, ensureStrokeTmp, getStrokeTmp, strokeTmpCtx } from "./stroke";
-import { DOC_H, DOC_W, type Pt } from "../core/types";
+import type { Pt } from "../core/types";
 
 /** ストローク開始時の対象レイヤースナップショット。基準画像を固定することで、同一ストローク内で重ね塗りしてもフィルターが二重に効かない */
 const filterPenBase = new Map<number, HTMLCanvasElement>();
 /** ペンでなぞった領域の累積マスク (白 = 適用済み) */
-const filterPenMask = createCanvas();
+const filterPenMask = document.createElement("canvas");
 const filterPenMaskCtx = filterPenMask.getContext("2d")!;
+
+/** ペンマスクをドキュメント実寸へ合わせる (サイズ変更時に内容はクリアされる) */
+function ensurePenMask(w: number, h: number): void {
+  if (filterPenMask.width !== w) filterPenMask.width = w;
+  if (filterPenMask.height !== h) filterPenMask.height = h;
+}
 
 /** ストローク開始: 対象レイヤーのスナップショットを取り、ペンマスクを初期化して最初の点を焼き込む */
 export function beginFilterPenStroke(at: Pt): void {
   filterPenBase.clear();
   doc.editTargets().forEach((l) => filterPenBase.set(l.id, clone(l.canvas)));
-  filterPenMaskCtx.clearRect(0, 0, DOC_W, DOC_H);
+  ensurePenMask(doc.width, doc.height);
+  filterPenMaskCtx.clearRect(0, 0, doc.width, doc.height);
   applyFilterPenSegment(at, at);
 }
 
@@ -44,8 +51,8 @@ export function applyFilterPenSegment(from: Pt, to: Pt): void {
   const pad = state.brushSize / 2 + 2 + blurPad;
   const bx = Math.max(0, Math.floor(Math.min(from.x, to.x) - pad));
   const by = Math.max(0, Math.floor(Math.min(from.y, to.y) - pad));
-  const br = Math.min(DOC_W, Math.ceil(Math.max(from.x, to.x) + pad));
-  const bb = Math.min(DOC_H, Math.ceil(Math.max(from.y, to.y) + pad));
+  const br = Math.min(doc.width, Math.ceil(Math.max(from.x, to.x) + pad));
+  const bb = Math.min(doc.height, Math.ceil(Math.max(from.y, to.y) + pad));
   const bw = br - bx;
   const bh = bb - by;
   if (bw <= 0 || bh <= 0) return;

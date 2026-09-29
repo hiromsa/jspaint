@@ -7,7 +7,6 @@ import { doc } from "./documentStore";
 import { history } from "./historyStack";
 import { hooks } from "./hooks";
 import { selection } from "./selectionStore";
-import { DOC_H, DOC_W } from "./types";
 
 export class FilterEngine {
   blur = 0;
@@ -65,9 +64,9 @@ export class FilterEngine {
     g.filter = "none";
     // 2) 選択範囲の外側を「フィルターなし」で上書き
     if (selection.hasSelection) {
-      const tg = this.fxTmp.getContext("2d")!;
+      const tg = this.ensureTmp();
       tg.globalCompositeOperation = "source-over";
-      tg.clearRect(0, 0, DOC_W, DOC_H);
+      tg.clearRect(0, 0, doc.width, doc.height);
       tg.drawImage(base.canvas, 0, 0);
       tg.globalCompositeOperation = "destination-out";
       tg.drawImage(selection.mask, 0, 0);
@@ -90,8 +89,8 @@ export class FilterEngine {
 
     // 1) フィルター適用済み画像を作る
     const filtered = document.createElement("canvas");
-    filtered.width = DOC_W;
-    filtered.height = DOC_H;
+    filtered.width = doc.width;
+    filtered.height = doc.height;
     const fg = filtered.getContext("2d")!;
     fg.filter = this.filterString();
     fg.drawImage(base.canvas, 0, 0);
@@ -101,8 +100,8 @@ export class FilterEngine {
     // 2) 背景レイヤーに焼き込む(選択範囲があればその範囲のみ)
     if (selection.hasSelection) {
       const masked = document.createElement("canvas");
-      masked.width = DOC_W;
-      masked.height = DOC_H;
+      masked.width = doc.width;
+      masked.height = doc.height;
       const mg = masked.getContext("2d")!;
       mg.drawImage(filtered, 0, 0);
       mg.globalCompositeOperation = "destination-in";
@@ -110,7 +109,7 @@ export class FilterEngine {
       mg.globalCompositeOperation = "source-over";
       base.ctx.drawImage(masked, 0, 0);
     } else {
-      base.ctx.clearRect(0, 0, DOC_W, DOC_H);
+      base.ctx.clearRect(0, 0, doc.width, doc.height);
       base.ctx.drawImage(filtered, 0, 0);
     }
 
@@ -139,10 +138,10 @@ export class FilterEngine {
     const cached = this.noiseCaches[mode];
     if (cached) return cached;
     const n = document.createElement("canvas");
-    n.width = DOC_W;
-    n.height = DOC_H;
+    n.width = doc.width;
+    n.height = doc.height;
     const nc = n.getContext("2d")!;
-    const img = nc.createImageData(DOC_W, DOC_H);
+    const img = nc.createImageData(doc.width, doc.height);
     let s = 0x9e3779b9; // xorshift32 固定シード
     const rand = (): number => {
       s ^= s << 13;
@@ -166,6 +165,18 @@ export class FilterEngine {
     nc.putImageData(img, 0, 0);
     this.noiseCaches[mode] = n;
     return n;
+  }
+
+  /** ドキュメントサイズ変更後に呼ぶ (画像読み込み時)。ノイズキャッシュは実寸依存のため無効化する */
+  onDocResized(): void {
+    this.noiseCaches = { color: null, gray: null };
+  }
+
+  /** フィルター適用作業用canvasをドキュメント実寸へ合わせて返す */
+  private ensureTmp(): CanvasRenderingContext2D {
+    if (this.fxTmp.width !== doc.width) this.fxTmp.width = doc.width;
+    if (this.fxTmp.height !== doc.height) this.fxTmp.height = doc.height;
+    return this.fxTmp.getContext("2d")!;
   }
 
   /** フィルター適用作業用の一時canvas */

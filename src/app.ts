@@ -34,6 +34,8 @@ import {
 import { bindLayers, renderLayers } from "./ui/layersPanel";
 import { bindFilters, syncFilterUI } from "./ui/filtersPanel";
 import { bindHeaderAndModal } from "./ui/exportModal";
+import { bindImageIO } from "./ui/imageIO";
+import { applyHostModeUI } from "./ui/hostMode";
 import { $ } from "./ui/dom";
 import { markDirty, toast } from "./ui/feedback";
 
@@ -42,6 +44,13 @@ const workspace = $("#workspace");
 function updateUndoButtons(): void {
   ($("#btn-undo") as HTMLButtonElement).disabled = !history.canUndo;
   ($("#btn-redo") as HTMLButtonElement).disabled = !history.canRedo;
+}
+
+/** ヘッダー / ワークスペースのドキュメント情報 (ファイル名・サイズ) を更新 */
+function syncDocInfo(): void {
+  $("#doc-name").textContent = doc.name;
+  $("#doc-dim").textContent = `${doc.width}×${doc.height}`;
+  $("#ws-size").textContent = `${doc.width} × ${doc.height}`;
 }
 
 /* ============ 座標変換 / ズーム → core/viewState.ts へ分離 ============ */
@@ -56,8 +65,11 @@ function syncZoomUI(): void {
 export function startApp(): void {
   mountIcons();
 
+  // ホストモード (standalone / embed) を判定して standalone 専用 UI の表示を切り替える
+  applyHostModeUI();
+
   // core からの UI 更新は hooks 経由で行う (実装をここで差し込む)
-  setHooks({ render, toast, markDirty, syncToolGuide, renderLayers, updateUndoButtons, syncFilterUI, syncZoomUI });
+  setHooks({ render, toast, markDirty, syncToolGuide, renderLayers, updateUndoButtons, syncFilterUI, syncZoomUI, syncDocInfo });
   // 背景レイヤーの描画 (前処理フィルター) を FilterEngine へ委譲
   doc.setBasePainter((g) => filters.drawBaseLayer(g));
   doc.init(createDemoImage());
@@ -81,4 +93,5 @@ export function startApp(): void {
   bindFilters();
   bindLayers();
   bindHeaderAndModal();
+  bindImageIO();
 }

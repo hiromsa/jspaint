@@ -18,8 +18,15 @@ TypeScript 実装の原型として、描画/選択/フィルター/エクスポ
   core→UI の逆依存は hooks (`core/hooks.ts`) 経由、`app.ts` は生成と配線のみ (~80行)
 
 ### キャンバスエンジン
-- 640×640 ステージ。「ドキュメント中心基準」の screen⇔doc 変換 (ズーム 5〜800%、パン、fit)
+- **可変ステージ**。「ドキュメント中心基準」の screen⇔doc 変換 (ズーム 5〜800%、パン、fit)。
+  実寸は `doc.width` / `doc.height` で管理し、画像読み込みで読み込み画像の実寸に追従する
 - チェッカーボード背景。デモ画像はCanvas自動生成 (外部依存なし・オフライン動作)
+
+### 画像入出力 & ホストモード (v0.2.0)
+- 読み込み: ヘッダー「開く」/ ワークスペースへのドラッグ&ドロップ (オーバーレイ付き) / `Ctrl+V` ペースト
+- 出力: ヘッダー「保存」(合成画像 PNG) / 「コピー」(`navigator.clipboard` へ `image/png`)
+- ホストモード: `?mode=embed|standalone` + iframe 自動判定で standalone 専用 UI (開く/保存) を出し分け
+- 詳細は [ui.md 2.6](./specification/ui.md#26-画像入出力とホストモード-standalone--embed) / [architecture.md](./specification/architecture.md)
 
 ### ツール
 - ブラシ / 消しゴム (サイズ・不透明度)、直線 / 矩形 / 円 (Shift拘束・塗りつぶし切替)
@@ -72,6 +79,7 @@ TypeScript 実装の原型として、描画/選択/フィルター/エクスポ
 | 10 | **機能単位へのリファクタリング** — 単一ファイルだった `app.ts` (約2,240行) を `core/` `painting/` `rendering/` `interaction/` `ui/` `assets/` の計25モジュールへ分割。状態はストア (doc / selection / history / filters) にカプセル化し、core→UI の逆依存は hooks パターンで解消 (`app.ts` は生成と配線のみ ~80行)。動作仕様は変更なし。検証は各ステップで `typecheck` + `build`。詳細は `docs/specification/architecture.md` を参照 |
 | 11 | **パペットワープ (`T`) を追加** — ピン (制御点) を打ってメッシュごと画像を滑らかに変形するツール。`puppet/` 新層 (delaunay / mesh / deformer / warpPaint / warpSession) として実装。Delaunay は自前 Bowyer-Watson (依存ゼロ)、変形は MLS rigid (加重 2D Procrustes 解析解)、描画は三角形クリップ + アフィン転写 (0.5px パッドでシーム防止)。ピン追加 (クリック / Alt=固定)・ドラッグ変形・ダブルクリック削除・Enter 確定 / Esc 取消 / ツール切替自動確定、選択範囲限定・複数レイヤー適用・Undo 対応。pure ロジックの単体検証 `npm run test:puppet` を追加 (18 ケース合格、対角線退化ケースと MLS 理論挙動に期待値を合わせた)。typecheck + build 合格。docs 更新 (ui.md 2.4.1 / architecture.md puppet 層) |
 | 12 | **変形済み状態でのピン打ち位置を修正** — これまで `addPin` はクリック位置 (変形後空間) をそのまま `original = current` として登録していたため、変形済みで打つと矛盾した制約が MLS に加わり画像がジャンプし「点がおかしな場所に配置される」ように見えていた。`mesh.ts` に `inverseDeformPoint` (変形後三角形の重心座標を初期三角形へ適用して初期空間へ逆変換) を追加し、`addPin` の `original` を逆変換結果にすることで「見た目の位置にピンが打てる・ピン追加だけでは画像が動かない」挙動に修正。単体検証 4 ケース追加 (合計 22 合格・変形後固定ピンでの変形ドリフト <1px を確認)。docs 更新 |
+| 13 | **画像入出力 + ホストモード + 可変ドキュメントサイズを追加** — ①画像の読み込み 3 経路 (ヘッダー「開く」/ ワークスペースへのドラッグ&ドロップ / `Ctrl+V` ペースト)、出力 2 経路 (「保存」= 合成画像 PNG ダウンロード /「コピー」= `navigator.clipboard` へ `image/png` 書き込み)。②呼び出され方 (standalone / embed) で I/O を切り替えるホストモード (`?mode=` パラメータ + iframe 自動判定、`data-standalone-only` 要素を CSS で非表示化) — SD Web UI からの埋め込みでは開く/保存を非表示にし、コピー・ペースト・postMessage 連携に専念できる。③ドキュメントサイズを可変化 (`doc.width/height`) し、読み込み画像の実寸に追従 (選択・履歴・フィルターは読み込み時にリセット)。検証は `npm run test:imageio` (puppeteer-core + 実機 Chrome/Edge のヘッドレス E2E、19 ケース合格) + typecheck + build + `npm run test:puppet` (22 合格)。docs 更新 (ui.md 2.6 / architecture.md) |
 
 ## 次回候補 (Backlog)
 
@@ -79,5 +87,7 @@ TypeScript 実装の原型として、描画/選択/フィルター/エクスポ
 - レイヤー順序入替・ブレンドモード・不透明度
 - Marching Ants を輪郭トレース (閉ループパス化) に置換 (現状は境界ピクセル近似)
 - マスクの羽化 (feather) / ブラシのエッジ軟化
-- 画像の読み込み (file input / ドラッグ&ドロップ)・リサイズ
-- 親アプリ連携の本実装 (Forge 拡張スクリプト / iframe 読み込みプロトコル)
+- 親アプリ連携の本実装 (Forge 拡張スクリプト / iframe 読み込みプロトコル):
+  - embed 時の画像受信プロトコル `postMessage({ type: 'JSPAINT_LOAD', image: dataURL })` の受信対応
+  - 完了時に自動で postMessage 送信 → 親アプリが iframe を閉じるフロー
+- 読み込み画像の拡大/縮小・リサイズ UI (現在は実寸のまま読み込む)
