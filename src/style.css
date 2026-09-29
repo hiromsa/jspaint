@@ -524,6 +524,20 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 .layer__eye svg { width: 14px; height: 14px; }
 .layer__eye:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
 
+/* レイヤーロック切替 (表示/非表示ボタンと同形状) */
+.layer__lock {
+  width: 26px; height: 26px; flex: none;
+  display: grid; place-items: center;
+  border: none; border-radius: 6px;
+  background: transparent; color: var(--text-3);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.layer__lock svg { width: 13px; height: 13px; }
+.layer__lock:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+.layer.is-locked .layer__lock { color: #fbbf24; }
+.layer.is-locked .layer__thumb, .layer.is-locked .layer__meta { opacity: 0.55; }
+
 .layer-actions { display: flex; gap: 6px; margin-bottom: 12px; }
 
 /* 選択範囲操作 (塗りつぶし / 解除) */

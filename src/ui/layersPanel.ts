@@ -1,5 +1,6 @@
 /**
  * ui/layersPanel.ts — レイヤーパネルの描画と配線
+ * レイヤー行: サムネイル / 名前 / 編集対象バッジ / ロック切替 / 表示・非表示。
  */
 import { mountIcons } from "../assets/icons";
 import { doc } from "../core/documentStore";
@@ -7,7 +8,6 @@ import { filters } from "../core/filterEngine";
 import type { Layer } from "../core/types";
 import { render } from "../rendering/renderer";
 import { $ } from "./dom";
-import { toast } from "./feedback";
 
 function layerBadgeHTML(l: Layer): string {
   let html = "";
@@ -15,9 +15,9 @@ function layerBadgeHTML(l: Layer): string {
   if (doc.editTargetIds.has(l.id) && l.id !== doc.activeLayerId) {
     html += `<span class="layer__badge layer__badge--target" title="編集対象 (Ctrl+クリックで解除)"><i data-icon="link"></i>編集</span>`;
   }
-  if (l.kind === "base") {
-    const fxOn = filters.filtersActive();
-    html += `<span class="layer__badge layer__badge--lock"><i data-icon="lock"></i></span>${fxOn ? '<span class="layer__badge layer__badge--fx">FX</span>' : ""}`;
+  if (l.kind === "image") {
+    const fxOn = filters.filtersActive() && doc.editTargets().includes(l);
+    html += `<span class="layer__badge layer__badge--image" title="元画像レイヤー (編集可)">${fxOn ? '<span class="layer__badge layer__badge--fx">FX</span>' : ""}</span>`;
   }
   return html;
 }
@@ -27,16 +27,21 @@ export function renderLayers(): void {
   list.innerHTML = "";
   [...doc.layers].reverse().forEach((l) => {
     const li = document.createElement("li");
-    li.className = `layer${l.id === doc.activeLayerId ? " is-active" : ""}${doc.editTargetIds.has(l.id) ? " is-target" : ""}${l.visible ? "" : " is-hidden-layer"}`;
+    li.className = `layer${l.id === doc.activeLayerId ? " is-active" : ""}${doc.editTargetIds.has(l.id) ? " is-target" : ""}${l.visible ? "" : " is-hidden-layer"}${l.locked ? " is-locked" : ""}`;
     li.innerHTML = `
       <div class="layer__thumb"></div>
       <div class="layer__meta">
         <div class="layer__name">${l.name} ${layerBadgeHTML(l)}</div>
-        <div class="layer__sub">${l.kind === "base" ? "元画像 · 前処理フィルター適用" : `${doc.width} × ${doc.height} · normal`}</div>
+        <div class="layer__sub">${l.kind === "image" ? "元画像 · 編集可" : `${doc.width} × ${doc.height} · normal`}</div>
       </div>
+      <button class="layer__lock" title="${l.locked ? "ロック解除" : "ロック (描画・フィルターの対象外にする)"}"><i data-icon="${l.locked ? "lock" : "lock-open"}"></i></button>
       <button class="layer__eye" title="表示 / 非表示"><i data-icon="${l.visible ? "eye" : "eye-off"}"></i></button>`;
     (li.querySelector(".layer__thumb") as HTMLElement).appendChild(cloneThumb(l.canvas));
     li.addEventListener("click", (e) => doc.selectLayer(l, e.ctrlKey || e.metaKey || e.shiftKey));
+    (li.querySelector(".layer__lock") as HTMLElement).addEventListener("click", (e) => {
+      e.stopPropagation();
+      doc.toggleLock(l);
+    });
     (li.querySelector(".layer__eye") as HTMLElement).addEventListener("click", (e) => {
       e.stopPropagation();
       l.visible = !l.visible;
@@ -62,10 +67,6 @@ function cloneThumb(src: HTMLCanvasElement): HTMLCanvasElement {
 
 export function bindLayers(): void {
   $("#btn-layer-add").addEventListener("click", () => doc.addLayer());
-  $("#btn-layer-dup").addEventListener("click", () => {
-    const l = doc.activeLayer();
-    if (l.kind === "paint") doc.addLayer(l);
-    else toast("背景レイヤーは複製できません", "info");
-  });
+  $("#btn-layer-dup").addEventListener("click", () => doc.addLayer(doc.activeLayer()));
   $("#btn-layer-del").addEventListener("click", () => doc.deleteActiveLayer());
 }

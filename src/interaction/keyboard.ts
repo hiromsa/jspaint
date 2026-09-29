@@ -9,6 +9,7 @@ import { interaction } from "../core/interactionState";
 import { selection } from "../core/selectionStore";
 import { history } from "../core/historyStack";
 import { deleteSelectionContents, deselect, fillSelection, selectAll } from "../core/selectionOps";
+import { copySelection, cutSelection } from "../core/clipboard";
 import { fitView, setZoom } from "../core/viewState";
 import { KEY_TOOL, TOOLS } from "../core/toolDefs";
 import { cancelPolygon, closePolygon } from "./pointer";
@@ -34,6 +35,10 @@ function onKeyDown(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && k === "y") { e.preventDefault(); history.redo(); return; }
   if ((e.ctrlKey || e.metaKey) && k === "a") { e.preventDefault(); selectAll(); return; }
   if ((e.ctrlKey || e.metaKey) && k === "d") { e.preventDefault(); deselect(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === "c") { e.preventDefault(); copySelection(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === "x") { e.preventDefault(); cutSelection(); return; }
+  // Ctrl+V (貼り付け) は paste イベントで処理する。Shift の有無 (Ctrl+Shift+V = ドキュメント差し替え) を記録
+  if ((e.ctrlKey || e.metaKey) && k === "v") { interaction.pasteShift = e.shiftKey; return; }
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); openExport(); return; }
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && k === "c") { e.preventDefault(); imageIOActions.copyComposite(); return; }
   if ((e.ctrlKey || e.metaKey) && k === "s") {

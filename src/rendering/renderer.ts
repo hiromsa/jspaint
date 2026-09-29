@@ -46,12 +46,12 @@ export function render(): void {
     }
   }
 
-  // 背景レイヤー (前処理フィルター — 選択範囲がある場合はその範囲のみ適用)
-  filters.drawBaseLayer(vctx);
-
-  // ペイントレイヤー (下 → 上)。パペットワープ中は変形プレビューに差し替える
+  // レイヤー (下 → 上)。フィルター有効時、編集対象レイヤーは適用済みプレビューに差し替える。
+  // パペットワープ中は変形プレビューに差し替える
   for (const l of doc.layers) {
-    if (l.kind === "paint" && l.visible) vctx.drawImage(warpSession.displayCanvas(l.id) ?? l.canvas, 0, 0);
+    if (!l.visible) continue;
+    const filtered = filters.layerPreview(l);
+    vctx.drawImage(filtered ?? warpSession.displayCanvas(l.id) ?? l.canvas, 0, 0);
   }
 
   drawStrokePreview(vctx);

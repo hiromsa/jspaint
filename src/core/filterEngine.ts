@@ -1,12 +1,15 @@
 /**
- * core/filterEngine.ts — Inpainting 前処理フィルター (背景レイヤーに適用)
+ * core/filterEngine.ts — Inpainting 前処理フィルター (編集対象レイヤーに適用)
  * フィルター設定の保持・CSS filter 文字列の生成・ノイズ (グレイン) の生成・
- * 背景レイヤーの描画・確定 (ベイク) を担う。
+ * 編集対象レイヤーへのプレビュー表示・確定 (ベイク) を担う。
+ * 適用先は「編集対象レイヤー」(アクティブ + Ctrl+クリックで追加した複数レイヤー)。
  */
 import { doc } from "./documentStore";
 import { history } from "./historyStack";
 import { hooks } from "./hooks";
 import { selection } from "./selectionStore";
+import { createCanvas } from "./canvasUtils";
+import type { Layer } from "./types";
 
 export class FilterEngine {
   blur = 0;
@@ -47,70 +50,70 @@ export class FilterEngine {
   }
 
   /**
-   * 背景レイヤー(元画像)を描画する。
-   * フィルター有効時、選択範囲があれば「その範囲のみ」にフィルターを適用する。
+   * レイヤーの表示用プレビューを返す。
+   * 編集対象レイヤーでフィルターが有効な場合、フィルター適用済み
+   * (選択範囲があれば「その範囲のみ」) の canvas を返し、それ以外は null。
    */
-  drawBaseLayer(g: CanvasRenderingContext2D): void {
-    const base = doc.baseLayer();
-    if (!base?.visible) return;
-    if (!this.filtersActive()) {
-      g.drawImage(base.canvas, 0, 0);
-      return;
-    }
-    // 1) フィルター適用版を全面に描く
+  layerPreview(l: Layer): HTMLCanvasElement | null {
+    if (!this.filtersActive()) return null;
+    if (l.locked || !doc.editTargets().includes(l)) return null;
+
+    const g = this.ensureTmp();
+    g.globalCompositeOperation = "source-over";
+    g.clearRect(0, 0, doc.width, doc.height);
     g.filter = this.filterString();
-    g.drawImage(base.canvas, 0, 0);
-    if (this.on.noise && this.noise > 0) this.drawNoise(g);
+    g.drawImage(l.canvas, 0, 0);
     g.filter = "none";
-    // 2) 選択範囲の外側を「フィルターなし」で上書き
+    if (this.on.noise && this.noise > 0) this.drawNoise(g);
+    // 選択範囲の外側を「フィルターなし」で上書き (範囲内のみ適用)
     if (selection.hasSelection) {
-      const tg = this.ensureTmp();
-      tg.globalCompositeOperation = "source-over";
-      tg.clearRect(0, 0, doc.width, doc.height);
-      tg.drawImage(base.canvas, 0, 0);
-      tg.globalCompositeOperation = "destination-out";
-      tg.drawImage(selection.mask, 0, 0);
-      tg.globalCompositeOperation = "source-over";
-      g.drawImage(this.fxTmp, 0, 0);
+      const g2 = this.ensureTmp2();
+      g2.globalCompositeOperation = "source-over";
+      g2.clearRect(0, 0, doc.width, doc.height);
+      g2.drawImage(l.canvas, 0, 0);
+      g2.globalCompositeOperation = "destination-out";
+      g2.drawImage(selection.mask, 0, 0);
+      g2.globalCompositeOperation = "source-over";
+      g.drawImage(this.fxTmp2, 0, 0);
     }
+    return this.fxTmp;
   }
 
   /**
-   * フィルターを確定(ベイク): 現在のフィルター結果を背景レイヤーのピクセルに焼き込み、
-   * フィルター設定をリセットする。選択範囲がある場合はその範囲のみ焼き込む。
+   * フィルターを確定(ベイク): 現在のフィルター結果を編集対象レイヤーの
+   * ピクセルに焼き込み、フィルター設定をリセットする。
+   * 選択範囲がある場合はその範囲のみ焼き込む。
    */
   bake(): void {
-    const base = doc.baseLayer();
-    if (!base || !this.filtersActive()) {
+    const targets = doc.editTargets();
+    if (!targets.length || !this.filtersActive()) {
       hooks.toast("有効なフィルターがありません", "info");
       return;
     }
-    history.pushUndo(base);
+    history.pushUndo(targets);
 
-    // 1) フィルター適用済み画像を作る
-    const filtered = document.createElement("canvas");
-    filtered.width = doc.width;
-    filtered.height = doc.height;
-    const fg = filtered.getContext("2d")!;
-    fg.filter = this.filterString();
-    fg.drawImage(base.canvas, 0, 0);
-    fg.filter = "none";
-    if (this.on.noise && this.noise > 0) this.drawNoise(fg);
+    for (const base of targets) {
+      // 1) フィルター適用済み画像を作る
+      const filtered = createCanvas(doc.width, doc.height);
+      const fg = filtered.getContext("2d")!;
+      fg.filter = this.filterString();
+      fg.drawImage(base.canvas, 0, 0);
+      fg.filter = "none";
+      if (this.on.noise && this.noise > 0) this.drawNoise(fg);
 
-    // 2) 背景レイヤーに焼き込む(選択範囲があればその範囲のみ)
-    if (selection.hasSelection) {
-      const masked = document.createElement("canvas");
-      masked.width = doc.width;
-      masked.height = doc.height;
-      const mg = masked.getContext("2d")!;
-      mg.drawImage(filtered, 0, 0);
-      mg.globalCompositeOperation = "destination-in";
-      mg.drawImage(selection.mask, 0, 0);
-      mg.globalCompositeOperation = "source-over";
-      base.ctx.drawImage(masked, 0, 0);
-    } else {
-      base.ctx.clearRect(0, 0, doc.width, doc.height);
-      base.ctx.drawImage(filtered, 0, 0);
+      // 2) レイヤーに焼き込む(選択範囲があればその範囲のみ)
+      if (selection.hasSelection) {
+        const masked = createCanvas(doc.width, doc.height);
+        const mg = masked.getContext("2d")!;
+        mg.drawImage(filtered, 0, 0);
+        mg.globalCompositeOperation = "destination-in";
+        mg.drawImage(selection.mask, 0, 0);
+        mg.globalCompositeOperation = "source-over";
+        base.ctx.drawImage(masked, 0, 0);
+      } else {
+        base.ctx.clearRect(0, 0, doc.width, doc.height);
+        base.ctx.drawImage(filtered, 0, 0);
+      }
     }
 
     // 3) フィルター設定をリセット
@@ -119,7 +122,12 @@ export class FilterEngine {
     hooks.renderLayers();
     hooks.markDirty();
     hooks.render();
-    hooks.toast(selection.hasSelection ? "選択範囲にフィルターを確定しました" : "フィルターを確定しました(ベイク)", "fx");
+    hooks.toast(
+      targets.length > 1
+        ? `${targets.length} レイヤーにフィルターを確定しました(ベイク)`
+        : "フィルターを確定しました(ベイク)",
+      "fx",
+    );
   }
 
   /** ノイズ(グレイン) — シード固定の決定論的パターンをキャッシュして再利用 (カラー / グレー) */
@@ -172,15 +180,23 @@ export class FilterEngine {
     this.noiseCaches = { color: null, gray: null };
   }
 
-  /** フィルター適用作業用canvasをドキュメント実寸へ合わせて返す */
+  /** プレビュー用の一時canvas (フィルター適用済み表示) をドキュメント実寸へ合わせて返す */
   private ensureTmp(): CanvasRenderingContext2D {
     if (this.fxTmp.width !== doc.width) this.fxTmp.width = doc.width;
     if (this.fxTmp.height !== doc.height) this.fxTmp.height = doc.height;
     return this.fxTmp.getContext("2d")!;
   }
 
+  /** プレビュー用の一時canvas 2 (選択範囲外の元画像保持用) をドキュメント実寸へ合わせて返す */
+  private ensureTmp2(): CanvasRenderingContext2D {
+    if (this.fxTmp2.width !== doc.width) this.fxTmp2.width = doc.width;
+    if (this.fxTmp2.height !== doc.height) this.fxTmp2.height = doc.height;
+    return this.fxTmp2.getContext("2d")!;
+  }
+
   /** フィルター適用作業用の一時canvas */
   private readonly fxTmp = document.createElement("canvas");
+  private readonly fxTmp2 = document.createElement("canvas");
 }
 
 /** アプリ全体で共有するフィルターエンジン */

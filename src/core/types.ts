@@ -40,14 +40,22 @@ export interface StrokePreview {
   y1: number;
 }
 
-/** レイヤー */
+/**
+ * レイヤー。
+ * kind:
+ *   - "image": 元画像レイヤー (画像読み込みで生成)。通常レイヤーと同様に編集・削除可能。
+ *              Inpainting マスクの生成対象には含めない (元画像は白化しない)。
+ *   - "paint": 描画レイヤー。Inpainting マスクの生成対象になる。
+ * locked: ロック中は描画・フィルターの適用対象から除外される (表示は通常どおり)。
+ */
 export interface Layer {
   id: number;
   name: string;
-  kind: "base" | "paint";
+  kind: "image" | "paint";
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
   visible: boolean;
+  locked: boolean;
 }
 
 /**

@@ -15,9 +15,9 @@ export function fillSelection(): void {
     hooks.toast("先に選択範囲を作成してください", "info");
     return;
   }
-  const targets = doc.editTargets().filter((l) => l.kind === "paint");
+  const targets = doc.editTargets();
   if (!targets.length) {
-    hooks.toast("ペイントレイヤーを編集対象にしてください", "info");
+    hooks.toast("ロック解除のレイヤーを編集対象にしてください", "info");
     return;
   }
   history.pushUndo();
@@ -34,11 +34,11 @@ export function fillSelection(): void {
   hooks.toast(targets.length > 1 ? `選択範囲を ${targets.length} レイヤーに塗りつぶしました` : "選択範囲を塗りつぶしました", "ok");
 }
 
-/** 選択範囲の内容をペイントレイヤーから消去 (Delete) */
+/** 選択範囲の内容を編集対象レイヤーから消去 (Delete) */
 export function deleteSelectionContents(): void {
-  const targets = doc.editTargets().filter((l) => l.kind === "paint");
+  const targets = doc.editTargets();
   if (!targets.length) {
-    hooks.toast("ペイントレイヤーを編集対象にしてください", "info");
+    hooks.toast("ロック解除のレイヤーを編集対象にしてください", "info");
     return;
   }
   history.pushUndo();

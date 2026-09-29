@@ -87,6 +87,11 @@ async function lastToast(page: Page): Promise<string> {
   });
 }
 
+/** 現在のレイヤー数を取得する */
+async function layerCount(page: Page): Promise<number> {
+  return page.evaluate(() => Number((document.querySelector("#layer-count") as HTMLElement).textContent));
+}
+
 /** 背景レイヤーのサムネイル中央の色を取得する */
 async function baseThumbCenterColor(page: Page): Promise<[number, number, number]> {
   return page.evaluate(() => {
@@ -122,36 +127,62 @@ async function main(): Promise<void> {
     /* ========== 1) standalone モード (既定) ========== */
     console.log("\n[standalone]");
     const page = await browser.newPage();
+    page.on("console", (msg) => console.log(`  [browser] ${msg.text()}`));
     await page.setViewport({ width: 1280, height: 800 });
     await page.goto(`${fileUrl}?mode=standalone`);
     await page.waitForSelector("#layer-list li");
 
     ok("html[data-host-mode=standalone]", await page.evaluate(() => document.documentElement.dataset.hostMode === "standalone"));
-    ok("開く/保存/コピーボタンが表示される", await page.evaluate(() =>
-      ["#btn-open", "#btn-save", "#btn-copy"].every((s) => (document.querySelector(s) as HTMLElement).offsetParent !== null),
+    ok("開く/保存/コピー/ペーストボタンが表示される", await page.evaluate(() =>
+      ["#btn-open", "#btn-save", "#btn-copy", "#btn-paste"].every((s) => (document.querySelector(s) as HTMLElement).offsetParent !== null),
     ));
     const init = await waitDocInfo(page, "640×640");
     ok("初期ドキュメント 640×640 / sample_photo.png", init.name === "sample_photo.png", `name=${init.name}`);
+    ok("起動時はレイヤー1枚 (元画像・編集可)", await layerCount(page) === 1);
 
-    /* --- 2) ペースト (Ctrl+V 相当) → ドキュメントが画像サイズへ追従 --- */
+    /* --- 2) ペースト (Ctrl+V) → 外部画像も新規レイヤーとして追加 --- */
     await injectImage(page, "paste", 320, 200, "pasted.png");
-    const pasted = await waitDocInfo(page, "320×200");
-    ok("ペーストでドキュメントが 320×200 に変化", pasted.dim === "320×200", `dim=${pasted.dim}`);
-    ok("ペーストではドキュメント名が clipboard.png になる", pasted.name === "clipboard.png", `name=${pasted.name}`);
-    ok("貼り付け後は READY 表示に戻る", pasted.status === "READY", `status=${pasted.status}`);
-    ok("貼り付け後に Undo 履歴はクリアされる", await page.evaluate(() => (document.querySelector("#btn-undo") as HTMLButtonElement).disabled));
-    const zoom = await page.evaluate(() => (document.querySelector("#btn-zoom-label") as HTMLElement).textContent);
-    ok("読み込み後に画面フィットされる", zoom !== "100%", `zoom=${zoom}`);
-    const [r, g, b] = await baseThumbCenterColor(page);
-    ok("背景レイヤーに貼り付け画像が反映される", Math.abs(r - 128) < 36 && g < 40 && Math.abs(b - 128) < 36, `rgb(${r},${g},${b})`);
+    await page.waitForFunction((n) => Number((document.querySelector("#layer-count") as HTMLElement).textContent) === n, {}, 2);
+    const pasted = await waitDocInfo(page, "640×640");
+    ok("外部画像の Ctrl+V でレイヤーが追加される", (await layerCount(page)) === 2);
+    ok("Ctrl+V ではドキュメントサイズは変わらない", pasted.dim === "640×640", `dim=${pasted.dim}`);
+    ok("外部画像を貼ったレイヤーがアクティブ (編集可能) になる", await page.evaluate(() =>
+      document.querySelector("#layer-list li")?.classList.contains("is-active") === true,
+    ));
 
-    /* --- 3) ドラッグ & ドロップ --- */
+    /* --- 3) Ctrl+Shift+V → ドキュメント差し替え (外部画像の読み込み) ---
+       ※ puppeteer の実キー入力はブラウザ本来の paste を発火してしまうため、
+         keydown イベントを dispatch してアプリの Shift 記録ロジックを検証する */
+    await page.evaluate(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "v", ctrlKey: true, shiftKey: true }));
+    });
+    await injectImage(page, "paste", 512, 384, "replaced.png");
+    const replaced = await waitDocInfo(page, "512×384");
+    ok("Ctrl+Shift+V でドキュメントが差し替わる", replaced.dim === "512×384", `dim=${replaced.dim}`);
+    ok("差し替え後は元画像レイヤー1枚に戻る", (await layerCount(page)) === 1);
+
+    /* --- 4) 内部コピー → 新規レイヤーとして貼り付け --- */
+    await sendCtrlKey(page, "c");
+    await new Promise((res) => setTimeout(res, 120));
+    await sendCtrlKey(page, "v");
+    await page.waitForFunction((n) => Number((document.querySelector("#layer-count") as HTMLElement).textContent) === n, {}, 2);
+    ok("Ctrl+C → Ctrl+V でコピー内容が新規レイヤーになる", (await layerCount(page)) === 2);
+
+    /* --- 5) ロック --- */
+    await page.evaluate(() => (document.querySelectorAll("#layer-list li")[0].querySelector(".layer__lock") as HTMLElement).click());
+    await new Promise((res) => setTimeout(res, 120));
+    ok("レイヤーのロック切替ができる", await page.evaluate(() => document.querySelector("#layer-list li")?.classList.contains("is-locked") === true));
+
+    /* --- 6) ドラッグ & ドロップ → ドキュメント差し替え --- */
     await injectImage(page, "drop", 256, 128, "dropped.png");
     const dropped = await waitDocInfo(page, "256×128");
-    ok("ドロップでドキュメントが 256×128 に変化", dropped.dim === "256×128", `dim=${dropped.dim}`);
+    ok("ドロップでドキュメントが 256×128 に差し替わる", dropped.dim === "256×128", `dim=${dropped.dim}`);
     ok("ドロップでドキュメント名が更新される", dropped.name === "dropped.png", `name=${dropped.name}`);
+    ok("差し替え後は元画像レイヤー1枚に戻る", (await layerCount(page)) === 1);
+    const [r, g, b] = await baseThumbCenterColor(page);
+    ok("元画像レイヤーに読み込み画像が反映される", Math.abs(r - 128) < 36 && g < 40 && Math.abs(b - 128) < 36, `rgb(${r},${g},${b})`);
 
-    /* --- 4) 保存 (Ctrl+S) --- */
+    /* --- 7) 保存 (Ctrl+S) --- */
     await sendCtrlKey(page, "s");
     await new Promise((res) => setTimeout(res, 150));
     const saveToast = await lastToast(page);
@@ -171,7 +202,7 @@ async function main(): Promise<void> {
     const copyBtnToast = await lastToast(page);
     ok("コピーボタンでもコピー動作 (toast 応答)", copyBtnToast.includes("クリップボード"), `toast="${copyBtnToast}"`);
 
-    /* ========== 6) embed モード (親アプリ埋め込みを想定) ========== */
+    /* --- 9) embed モード (親アプリ埋め込みを想定) ========== */
     console.log("\n[embed]");
     const page2 = await browser.newPage();
     await page2.setViewport({ width: 1280, height: 800 });
@@ -182,12 +213,14 @@ async function main(): Promise<void> {
     ok("開く/保存ボタンは非表示", await page2.evaluate(() =>
       ["#btn-open", "#btn-save"].every((s) => getComputedStyle(document.querySelector(s) as HTMLElement).display === "none"),
     ));
-    ok("コピーボタンは表示される", await page2.evaluate(() => (document.querySelector("#btn-copy") as HTMLElement).offsetParent !== null));
+    ok("コピー/ペーストボタンは表示される", await page2.evaluate(() =>
+      ["#btn-copy", "#btn-paste"].every((s) => (document.querySelector(s) as HTMLElement).offsetParent !== null),
+    ));
 
-    /* --- 7) embed でもペースト / コピーは利用可 --- */
+    /* --- 10) embed でも Ctrl+V でレイヤー追加ができる --- */
     await injectImage(page2, "paste", 128, 64, "embed.png");
-    const embedPaste = await waitDocInfo(page2, "128×64");
-    ok("embed でもペーストで画像を読み込める", embedPaste.dim === "128×64", `dim=${embedPaste.dim}`);
+    await page2.waitForFunction((n) => Number((document.querySelector("#layer-count") as HTMLElement).textContent) === n, {}, 2);
+    ok("embed でも Ctrl+V でレイヤーを追加できる", (await layerCount(page2)) === 2);
 
     await sendCtrlKey(page2, "s");
     await new Promise((res) => setTimeout(res, 150));

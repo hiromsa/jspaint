@@ -17,7 +17,6 @@ import { state } from "./core/editorState";
 import { doc } from "./core/documentStore";
 import { selection } from "./core/selectionStore";
 import { history } from "./core/historyStack";
-import { filters } from "./core/filterEngine";
 import { setHooks } from "./core/hooks";
 import { fitView } from "./core/viewState";
 import { render, resizeView } from "./rendering/renderer";
@@ -70,8 +69,6 @@ export function startApp(): void {
 
   // core からの UI 更新は hooks 経由で行う (実装をここで差し込む)
   setHooks({ render, toast, markDirty, syncToolGuide, renderLayers, updateUndoButtons, syncFilterUI, syncZoomUI, syncDocInfo });
-  // 背景レイヤーの描画 (前処理フィルター) を FilterEngine へ委譲
-  doc.setBasePainter((g) => filters.drawBaseLayer(g));
   doc.init(createDemoImage());
 
   resizeView();

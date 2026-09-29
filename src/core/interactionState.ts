@@ -34,4 +34,6 @@ export const interaction = {
   filterPenLast: null as Pt | null,
   /** Alt キーの押下状態 (rAF ループ内ではイベントが取れないため追跡) */
   altKey: false,
+  /** 直前の Ctrl+V keydown で Shift が押されていたか (paste イベントは修飾キー情報を持たないため記録) */
+  pasteShift: false,
 };

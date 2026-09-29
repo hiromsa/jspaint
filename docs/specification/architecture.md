@@ -26,13 +26,16 @@ src/
     canvasUtils.ts   canvas 純粋ユーティリティ (clone / tintMask / floodMask / roundRectPath / hexA)
                      ※ ドキュメント可変化のため createCanvas はサイズ必須・floodMask は引数 canvas からサイズ取得
     imageSource.ts   画像ソースの読み込み (File / Blob → canvas 化・非同期)
+    clipboard.ts     選択範囲のコピー / 切り取り / 新規レイヤー貼り付け (内部クリップボード)
     documentStore.ts レイヤー配列・アクティブ・編集対象・**ドキュメント実寸 (width/height)・名前**の管理
-                     + 合成画像生成 + replaceBaseImage (doc)
-    documentOps.ts   ストア間の複合操作 (applyBaseImage: 画像をベースとして適用し
-                     選択 / 履歴 / フィルターをリセットして fit)
+                     + 合成画像生成 + loadAsDocument / addImageLayer / toggleLock / resetToInitial (doc)
+                     ※ レイヤー種別は image (元画像・編集可) / paint (マスク生成対象)。ロック中は編集対象から除外
+    documentOps.ts   ストア間の複合操作 (applyBaseImage: 画像でドキュメントを読み直す /
+                     resetDocument: 読み込み直後の状態へ戻す)
     selectionStore.ts 選択マスク・Marching Ants の管理 (selection) ※ resizeTo でドキュメント実寸に追従
     historyStack.ts  Undo / Redo (スナップショット方式・40ステップ) (history)
-    filterEngine.ts  前処理フィルターの状態・適用・ベイク (filters) ※ onDocResized でキャッシュ無効化
+    filterEngine.ts  前処理フィルターの状態・**編集対象レイヤーへのプレビュー (layerPreview)・ベイク** (filters)
+                     ※ onDocResized でキャッシュ無効化
     selectionOps.ts  選択範囲への編集操作 (全選択 / 塗りつぶし / 消去 / 解除)
     viewState.ts     ビューポート・ズーム / パン・screen⇔doc 変換 (viewport)
     hooks.ts         UI へのコールバック窓口 (hooks / setHooks)
@@ -63,11 +66,12 @@ src/
     dom.ts           $ / $$ / paintRangeFill
     feedback.ts      toast / markDirty / markClean
     hostMode.ts      ホストモード (standalone / embed) の判定と <html data-host-mode> 設定
-    imageIO.ts       画像の入出力配線 (開く / 保存 / クリップボードコピー / Ctrl+V / ドラッグ&ドロップ)
+    imageIO.ts       画像の入出力配線 (開く / 保存 / クリップボードコピー / Ctrl+V・Ctrl+Shift+V / ドラッグ&ドロップ
+                     / 「クリップボードから新規作成」ボタン)
     panels.ts        ツールボックス・パラメータ・カラー・タブ
-    layersPanel.ts   レイヤーパネル
+    layersPanel.ts   レイヤーパネル (ロック切替 / 表示・非表示 / 編集対象バッジ)
     filtersPanel.ts  フィルタータブ
-    exportModal.ts   ヘッダー操作 + Export モーダル (postMessage 連携)
+    exportModal.ts   ヘッダー操作 + Export モーダル (postMessage 連携) + キャンセル (初期状態へ復元)
 ```
 
 ## 2. 依存方向のルール
@@ -142,6 +146,25 @@ pointerup   → 後始末 → render()
     (`[data-standalone-only]` を embed で非表示)。JS 側の個別分岐は最小限。
   - 画像適用・保存・コピーの実体は core (`documentOps`) / ui (`imageIO`) に分離し、
     モードは「どのボタンを表示するか」にのみ影響する (ロジック自体はモード非依存)。
+- **レイヤーモデルの統一 (Photoshop ライク化)** (v0.2.1):
+  - レイヤー種別は `image` (元画像・**編集・複製・削除可**) と `paint` (描画要素) の 2 種。
+    起動 / ドキュメント差し替え時は image レイヤー 1 枚のみで開始する。
+  - **Inpainting マスクは paint レイヤー (+選択範囲) からのみ生成** (元画像は白化しない)。
+    SD Web UI 連携のプロトコルを維持するための区別であり、UI 上の制限 (ロック等) とは独立。
+  - レイヤー操作: 追加 / 複製 / 削除 (最低 1 枚) / 表示非表示 / **ロック** / 編集対象 (Ctrl+クリック)。
+    ロック中のレイヤーは `editTargets()` から除外されるため、描画・レタッチ・フィルター・パペットワープが
+    自動的に対象外になる。
+  - **フィルターの適用先は編集対象レイヤー**。プレビューは `filterEngine.layerPreview(l)` が
+    編集対象レイヤーのみフィルター適用済み canvas を返し、renderer がそれに差し替えて描画する
+    (旧 drawBaseLayer の背景固定ロジックを置換)。ベイクも編集対象レイヤー全てに焼き込む。
+  - **レイヤー指向のコピーペースト** (`core/clipboard.ts`): Ctrl+C/X で編集対象レイヤーの合成 × 選択範囲を
+    内部クリップボードへ (不透明 bbox で切り抜き・元位置を記憶)、Ctrl+V で元位置の新規レイヤーに貼り付け。
+  - **ペーストとドキュメント差し替えの分離**: Ctrl+V = 新規レイヤー貼り付け (内部優先 → 外部画像)、
+    Ctrl+Shift+V / 「開く」/ ドロップ = ドキュメント差し替え (`documentOps.applyBaseImage`)。
+    paste イベントは修飾キー情報を持たないため、keydown で Shift 状態を記録して判定する
+    (`interaction.pasteShift`)。
+  - 「キャンセル」ボタンは読み込み直後の初期状態へ復元 (`doc.resetToInitial` +
+    `documentOps.resetDocument`: 選択・履歴・フィルターリセット込み)。
 - **パペットワープは外部依存ゼロ** (v0.1.6): Delaunay 分割は Bowyer-Watson 法を自前実装
   (`puppet/delaunay.ts`)。頂点数は数百規模でセッション開始時 1 回のみ実行のため素朴な実装で十分。
   変形計算は MLS rigid (加重 2D Procrustes の解析解: θ = atan2(Σw·(P̂×Q̂), Σw·(P̂·Q̂))、

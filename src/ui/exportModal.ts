@@ -3,15 +3,12 @@
  * 合成画像 / 白黒マスクの生成・プレビュー・PNG保存・親アプリへの postMessage を担う。
  */
 import { doc } from "../core/documentStore";
-import { filters } from "../core/filterEngine";
 import { history } from "../core/historyStack";
 import { selection } from "../core/selectionStore";
 import { state } from "../core/editorState";
+import { resetDocument } from "../core/documentOps";
 import { fitView, setZoom } from "../core/viewState";
 import { cancelPolygon } from "../interaction/pointer";
-import { render } from "../rendering/renderer";
-import { renderLayers } from "../ui/layersPanel";
-import { syncFilterUI } from "./filtersPanel";
 import { hostMode } from "./hostMode";
 import { $, $$ } from "./dom";
 import { toast } from "./feedback";
@@ -98,14 +95,8 @@ export function bindHeaderAndModal(): void {
   $("#btn-export").addEventListener("click", openExport);
 
   $("#btn-cancel").addEventListener("click", () => {
-    doc.layers.filter((l) => l.kind === "paint").forEach((l) => l.ctx.clearRect(0, 0, l.canvas.width, l.canvas.height));
-    selection.clearSelection();
-    filters.resetValues();
-    syncFilterUI();
-    history.clear();
-    renderLayers();
-    render();
-    toast("編集をリセットしました", "info");
+    resetDocument();
+    toast("編集をリセットしました (読み込み直後の状態へ戻しました)", "info");
   });
 
   $("#modal-close").addEventListener("click", closeExport);

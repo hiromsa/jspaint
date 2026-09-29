@@ -1,16 +1,28 @@
 /**
  * core/documentStore.ts — レイヤー (ドキュメント) の状態と操作
- * レイヤー配列・アクティブレイヤー・編集対象の管理と、合成画像の生成を担う。
- * 背景レイヤーの描画処理 (前処理フィルター) は setBasePainter() で差し込む
- * (FilterEngine への依存を避けるため)。
+ * レイヤー配列・アクティブレイヤー・編集対象・ドキュメント実寸・名前の管理と、
+ * 合成画像の生成を担う。
+ * レイヤーモデル (v0.2.1): 「元画像 (image)」も通常レイヤーと同様に編集・削除可能。
+ * 起動 / 画像読み込み時は image レイヤー 1 枚のみで開始する (描画レイヤーはユーザーが追加)。
+ * Inpainting マスクは paint レイヤー (+選択範囲) からのみ生成する。
  */
+import { clone } from "./canvasUtils";
 import { hooks } from "./hooks";
 import { DOC_H, DOC_W, type Layer } from "./types";
+
+/** 初期状態のスナップショット (キャンセルで「元の状態」へ戻すため) */
+interface LayerSeed {
+  name: string;
+  kind: Layer["kind"];
+  canvas: HTMLCanvasElement;
+  visible: boolean;
+  locked: boolean;
+}
 
 export class DocumentStore {
   layers: Layer[] = [];
   private nextLayerId = 1;
-  activeLayerId = 2;
+  activeLayerId = 1;
   /** 編集対象レイヤー (描画 / レタッチ系ツールが作用する対象)。常に activeLayerId を含む */
   editTargetIds = new Set<number>();
 
@@ -20,61 +32,85 @@ export class DocumentStore {
   /** ドキュメント名 (ヘッダー表示と保存ファイル名の基底) */
   name = "sample_photo.png";
 
-  private basePainter: ((g: CanvasRenderingContext2D) => void) | null = null;
+  /** ドキュメント読み込み直後の状態 (キャンセル処理で復元する) */
+  private initialSeeds: LayerSeed[] | null = null;
 
-  /** 背景レイヤー (元画像) の描画処理を差し込む */
-  setBasePainter(painter: (g: CanvasRenderingContext2D) => void): void {
-    this.basePainter = painter;
-  }
-
-  baseLayer(): Layer | undefined {
-    return this.layers.find((l) => l.kind === "base");
-  }
-
+  /** アクティブレイヤーを取得 (存在しない場合は最後のレイヤー) */
   activeLayer(): Layer {
-    return this.layers.find((l) => l.id === this.activeLayerId)!;
+    return this.layers.find((l) => l.id === this.activeLayerId) ?? this.layers[this.layers.length - 1];
   }
 
+  /** 描画 (マスク生成対象) レイヤー一覧 */
   paintLayers(): Layer[] {
     return this.layers.filter((l) => l.kind === "paint");
   }
 
-  /** 編集対象レイヤー一覧 (activeLayer を必ず含む。layers の並び順) */
+  /**
+   * 編集対象レイヤー一覧 (activeLayer を必ず含む。layers の並び順)。
+   * ロック中のレイヤーは除外される。
+   */
   editTargets(): Layer[] {
     const ids = new Set(this.editTargetIds);
     ids.add(this.activeLayerId);
-    return this.layers.filter((l) => ids.has(l.id));
+    return this.layers.filter((l) => ids.has(l.id) && !l.locked);
   }
 
-  makeLayer(name: string, kind: "base" | "paint", image?: HTMLCanvasElement): Layer {
+  makeLayer(name: string, kind: Layer["kind"], image?: HTMLCanvasElement): Layer {
     const canvas = document.createElement("canvas");
     canvas.width = this.width;
     canvas.height = this.height;
     // レタッチ系ツール (覆い焼き/焼き込み) は getImageData を頻用するため CPU 側バッファを優先
     const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
     if (image) ctx.drawImage(image, 0, 0);
-    return { id: this.nextLayerId++, name, kind, canvas, ctx, visible: true };
+    return { id: this.nextLayerId++, name, kind, canvas, ctx, visible: true, locked: false };
   }
 
-  /** ベース画像 (デモ or 読み込み画像) でドキュメントを初期化する */
+  /**
+   * ベース画像 (デモ or 読み込み画像) でドキュメントを初期化する。
+   * レイヤーは image レイヤー 1 枚のみ (直接編集可能)。初期状態のスナップショットを保持する。
+   */
   init(baseImage: HTMLCanvasElement, name = "sample_photo.png"): void {
     this.width = baseImage.width;
     this.height = baseImage.height;
     this.name = name;
-    this.layers = [this.makeLayer("背景 (元画像)", "base", baseImage)];
-    const l1 = this.makeLayer("Layer 1", "paint");
-    this.layers.push(l1);
-    this.activeLayerId = l1.id;
-    this.editTargetIds = new Set([l1.id]);
+    const base = this.makeLayer("元画像", "image", baseImage);
+    this.layers = [base];
+    this.activeLayerId = base.id;
+    this.editTargetIds = new Set([base.id]);
+    this.saveInitialState();
   }
 
   /**
-   * 背景画像を差し替え、ドキュメントサイズを読み込み画像に合わせる。
-   * 既存のペイントレイヤーは空の状態で再作成される (選択・履歴・フィルターの
-   * リセットは documentOps.applyBaseImage が一括して行う)。
+   * 画像でドキュメントを読み直す (「開く」/ Ctrl+Shift+V / ドロップ)。
+   * 選択・履歴・フィルターのリセットは documentOps 側で行う。
    */
-  replaceBaseImage(baseImage: HTMLCanvasElement, name?: string): void {
+  loadAsDocument(baseImage: HTMLCanvasElement, name?: string): void {
     this.init(baseImage, name ?? this.name);
+  }
+
+  /** 初期状態 (読み込み直後) を保存する (キャンセル処理の復元用) */
+  private saveInitialState(): void {
+    this.initialSeeds = this.layers.map((l) => ({
+      name: l.name,
+      kind: l.kind,
+      canvas: clone(l.canvas),
+      visible: l.visible,
+      locked: l.locked,
+    }));
+  }
+
+  /** 初期状態 (読み込み直後) のレイヤー構成へ復元する (キャンセル処理) */
+  resetToInitial(): void {
+    if (!this.initialSeeds) return;
+    this.layers = this.initialSeeds.map((seed) => {
+      const l = this.makeLayer(seed.name, seed.kind);
+      l.ctx.drawImage(seed.canvas, 0, 0);
+      l.visible = seed.visible;
+      l.locked = seed.locked;
+      return l;
+    });
+    this.activeLayerId = this.layers[0].id;
+    this.editTargetIds = new Set([this.activeLayerId]);
   }
 
   /** 全ペイントレイヤーをクリア (キャンセル処理) */
@@ -82,15 +118,14 @@ export class DocumentStore {
     for (const l of this.paintLayers()) l.ctx.clearRect(0, 0, this.width, this.height);
   }
 
-  /** 背景レイヤー (前処理フィルター適用) + 可視ペイントレイヤーを合成する */
+  /** 全レイヤー (可視のみ) を合成する */
   compositeCanvas(): HTMLCanvasElement {
     const c = document.createElement("canvas");
     c.width = this.width;
     c.height = this.height;
     const g = c.getContext("2d")!;
-    if (this.basePainter) this.basePainter(g);
     for (const l of this.layers) {
-      if (l.kind === "paint" && l.visible) g.drawImage(l.canvas, 0, 0);
+      if (l.visible) g.drawImage(l.canvas, 0, 0);
     }
     return c;
   }
@@ -103,36 +138,71 @@ export class DocumentStore {
     return `#${to2(d[0])}${to2(d[1])}${to2(d[2])}`;
   }
 
-  /** レイヤーを追加し、アクティブ + 編集対象にする */
-  addLayer(copy?: Layer): void {
+  /** 新規レイヤーを追加し、アクティブ + 編集対象にする (copy 指定時は内容を複製)。追加したレイヤーを返す */
+  addLayer(copy?: Layer): Layer {
     const l = copy
-      ? this.makeLayer(`${copy.name} copy`, "paint")
-      : this.makeLayer(`Layer ${this.paintLayers().length + 1}`, "paint");
+      ? this.makeLayer(`${copy.name} copy`, copy.kind)
+      : this.makeLayer(`Layer ${this.nextPaintLayerNumber()}`, "paint");
     if (copy) l.ctx.drawImage(copy.canvas, 0, 0);
     this.layers.push(l);
     this.activeLayerId = l.id;
     this.editTargetIds = new Set([l.id]);
     hooks.renderLayers();
     hooks.toast(`レイヤー「${l.name}」を追加`, "ok");
+    return l;
   }
 
-  /** アクティブレイヤーを削除する (背景 / 最後のペイントレイヤーは削除不可) */
+  /** 新規描画レイヤー名の連番 (既存連番の重複を避けて採番) */
+  private nextPaintLayerNumber(): number {
+    let n = this.paintLayers().length + 1;
+    while (this.layers.some((l) => l.name === `Layer ${n}`)) n++;
+    return n;
+  }
+
+  /**
+   * 画像を新規レイヤーとして追加する (クリップボードからの貼り付けなど)。
+   * レイヤーキャンバスはドキュメント実寸。画像は中央に配置される
+   * (ドキュメントより大きい画像はドキュメント範囲でクリップされる)。
+   * 追加したレイヤーがアクティブ + 編集対象になる。
+   */
+  addImageLayer(image: HTMLCanvasElement, name?: string): Layer {
+    const l = this.makeLayer(name ?? `Layer ${this.nextPaintLayerNumber()}`, "paint");
+    const dx = Math.round((this.width - image.width) / 2);
+    const dy = Math.round((this.height - image.height) / 2);
+    l.ctx.drawImage(image, dx, dy);
+    this.layers.push(l);
+    this.activeLayerId = l.id;
+    this.editTargetIds = new Set([l.id]);
+    hooks.renderLayers();
+    hooks.render();
+    return l;
+  }
+
+  /** アクティブレイヤーを削除する (レイヤーが1枚だけの場合は削除不可) */
   deleteActiveLayer(): void {
+    if (this.layers.length <= 1) {
+      hooks.toast("レイヤーは最低1枚必要です", "info");
+      return;
+    }
     const l = this.activeLayer();
-    if (l.kind === "base") {
-      hooks.toast("背景レイヤーは削除できません", "info");
-      return;
-    }
-    if (this.paintLayers().length <= 1) {
-      hooks.toast("ペイントレイヤーは最低1枚必要です", "info");
-      return;
-    }
     this.layers = this.layers.filter((x) => x.id !== l.id);
-    this.activeLayerId = this.paintLayers().at(-1)!.id;
+    this.activeLayerId = this.layers[this.layers.length - 1].id;
     this.editTargetIds = new Set([this.activeLayerId]);
     hooks.renderLayers();
     hooks.render();
     hooks.toast(`レイヤー「${l.name}」を削除`, "ok");
+  }
+
+  /** レイヤーのロック状態を切り替える (ロック中は描画・フィルターの対象外) */
+  toggleLock(l: Layer): void {
+    l.locked = !l.locked;
+    if (l.locked && this.editTargetIds.has(l.id)) {
+      this.editTargetIds.delete(l.id);
+      if (this.activeLayerId === l.id) hooks.toast("ロック中のレイヤーは編集対象になりません", "info");
+    }
+    hooks.renderLayers();
+    hooks.syncToolGuide();
+    hooks.toast(`「${l.name}」を${l.locked ? "ロック" : "ロック解除"}しました`, "info");
   }
 
   /**
@@ -142,6 +212,10 @@ export class DocumentStore {
   selectLayer(l: Layer, additive: boolean): void {
     if (additive) {
       if (l.id === this.activeLayerId) return; // アクティブレイヤーは常に編集対象
+      if (l.locked) {
+        hooks.toast("ロック中のレイヤーは編集対象にできません", "info");
+        return;
+      }
       if (this.editTargetIds.has(l.id)) {
         this.editTargetIds.delete(l.id);
         hooks.toast(`「${l.name}」を編集対象から解除`, "info");
