@@ -1,10 +1,8 @@
 /**
- * demo.ts — 単体動作用のデモ素材 (640×640 のサンプル写真をCanvasに描画)
+ * assets/demo.ts — 単体動作用のデモ素材 (640×640 のサンプル写真をCanvasに描画)
  * 外部画像に依存しないため、file:// でも動作する。
  */
-
-export const DOC_W = 640;
-export const DOC_H = 640;
+import { DOC_H, DOC_W } from "../core/types";
 
 /** 夕暮れの湖畔風のサンプル画像を生成 */
 export function createDemoImage(w = DOC_W, h = DOC_H): HTMLCanvasElement {

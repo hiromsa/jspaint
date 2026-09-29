@@ -1,5 +1,5 @@
 /**
- * lucide-static v1.48.0 由来のアイコンパス (ISC License)
+ * assets/icons.ts — lucide-static v1.48.0 由来のアイコンパス (ISC License)
  * https://lucide.dev
  */
 const P = (d: string) => d;

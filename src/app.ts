@@ -1,77 +1,25 @@
 /**
  * app.ts — JSPaint UI モック本体
  * Photoshop/Figma ライクな Inpainting 前処理ペイントの動作デモ。
+ *
+ * リファクタリング進行中: 型 / ツール定義 / キャンバスユーティリティ / UI 補助は
+ * core/ ui/ assets/ へ分離済み (ストア・描画・ツール・入力は後続ステップで分割)。
  */
-import { mountIcons } from "./icons";
-import { createDemoImage, DOC_H, DOC_W } from "./demo";
-
-/* ============ 型 ============ */
-export type ToolId =
-  | "brush" | "eraser" | "bucket"
-  | "smudge" | "bloat" | "dodge" | "burn" | "filter-pen"
-  | "line" | "rect" | "ellipse"
-  | "select-rect" | "lasso" | "polygon" | "wand" | "mask-pen"
-  | "eyedropper" | "pan";
-
-type SelMode = "new" | "add" | "sub";
-
-interface Layer {
-  id: number;
-  name: string;
-  kind: "base" | "paint";
-  canvas: HTMLCanvasElement;
-  ctx: CanvasRenderingContext2D;
-  visible: boolean;
-}
-
-const TOOLS: Record<ToolId, { label: string; key: string; guide: string; cursor: string }> = {
-  brush:       { label: "ブラシ",       key: "B", guide: "ドラッグで描画 · [ ] でサイズ", cursor: "none" },
-  eraser:      { label: "消しゴム",     key: "E", guide: "ドラッグで描画を消去", cursor: "none" },
-  bucket:      { label: "塗りつぶし",   key: "G", guide: "クリックで類似色領域を塗りつぶし", cursor: "crosshair" },
-  smudge:      { label: "指先",         key: "S", guide: "ドラッグで色をにじませる · [ ] でサイズ", cursor: "none" },
-  bloat:       { label: "膨張",         key: "V", guide: "ドラッグで領域を球面状に変形 · 長押しで持続 · [ ] でサイズ · Alt で方向を一時反転", cursor: "none" },
-  dodge:       { label: "覆い焼き",     key: "D", guide: "ドラッグで明るく · Alt で焼き込みに反転", cursor: "none" },
-  burn:        { label: "焼き込み",     key: "J", guide: "ドラッグで暗く · Alt で覆い焼きに反転", cursor: "none" },
-  "filter-pen": { label: "フィルターペン", key: "F", guide: "ドラッグでなぞった範囲にフィルター設定を焼き込む · フィルタータブで内容を設定", cursor: "none" },
-  line:        { label: "直線",         key: "L", guide: "ドラッグで直線 · Shift で水平 / 垂直 / 45°", cursor: "crosshair" },
-  rect:        { label: "矩形",         key: "U", guide: "ドラッグで矩形 · Shift で正方形", cursor: "crosshair" },
-  ellipse:     { label: "円",           key: "O", guide: "ドラッグで楕円 · Shift で正円", cursor: "crosshair" },
-  "select-rect": { label: "矩形選択",   key: "M", guide: "ドラッグで範囲選択 (サイズ表示あり) · Shift=追加 / Alt=除外", cursor: "crosshair" },
-  lasso:       { label: "投げ縄選択",   key: "Q", guide: "ドラッグで囲んで選択", cursor: "crosshair" },
-  polygon:     { label: "多角形選択",   key: "P", guide: "クリックで頂点追加 / ドラッグでフリーハンド · ダブルクリック / Enter で確定 · Esc で取消", cursor: "crosshair" },
-  wand:        { label: "魔法の杖",     key: "W", guide: "クリックで類似色範囲を選択", cursor: "crosshair" },
-  "mask-pen":  { label: "選択ペン",     key: "K", guide: "ドラッグで選択マスクを描く · Shift=追加 / Alt=除外", cursor: "none" },
-  eyedropper:  { label: "スポイト",     key: "I", guide: "クリックで描画色を取得", cursor: "crosshair" },
-  pan:         { label: "手のひら",     key: "H", guide: "ドラッグで表示移動 · ホイールでズーム", cursor: "grab" },
-};
+import { mountIcons } from "./assets/icons";
+import { createDemoImage } from "./assets/demo";
+import { DOC_H, DOC_W } from "./core/types";
+import type { Layer, SelMode, ToolId } from "./core/types";
+import { state } from "./core/editorState";
+import { CIRCLE_CURSOR_TOOLS, KEY_TOOL, PAINT_TOOLS, TOOLS, TOOL_ICON } from "./core/toolDefs";
+import { clone, hexA, roundRectPath, tintMask } from "./core/canvasUtils";
+import { $, $$ } from "./ui/dom";
+import { markDirty, toast } from "./ui/feedback";
 
 /* ============ DOM ============ */
-const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
-const $$ = <T extends HTMLElement>(sel: string) => Array.from(document.querySelectorAll(sel)) as T[];
-
 const view = $("#view") as HTMLCanvasElement;
 const vctx = view.getContext("2d")!;
 const stage = $("#stage");
 const workspace = $("#workspace");
-
-/* ============ 状態 ============ */
-const state = {
-  tool: "brush" as ToolId,
-  fg: "#2563eb",
-  bg: "#ffffff",
-  brushSize: 24,
-  opacity: 100,
-  fillShape: true,
-  tolerance: 25,
-  selMode: "new" as SelMode,
-  /** 膨張ブラシの効果方向: 1 = 膨張 / -1 = 収縮 (Alt で一時反転) */
-  bloatDir: 1 as 1 | -1,
-  zoom: 1,
-  panX: 0,
-  panY: 0,
-  dirty: false,
-  spacePan: false,
-};
 
 let layers: Layer[] = [];
 let nextLayerId = 1;
@@ -121,14 +69,6 @@ interface Snap {
 }
 const undoStack: Snap[] = [];
 const redoStack: Snap[] = [];
-
-function clone(c: HTMLCanvasElement): HTMLCanvasElement {
-  const n = document.createElement("canvas");
-  n.width = c.width;
-  n.height = c.height;
-  n.getContext("2d")!.drawImage(c, 0, 0);
-  return n;
-}
 
 /** Undo 対象レイヤーのスナップショットを積む。未指定時は現在の編集対象レイヤーすべて */
 function pushUndo(target?: Layer | Layer[]): void {
@@ -186,26 +126,6 @@ function redo(): void {
 function updateUndoButtons(): void {
   ($("#btn-undo") as HTMLButtonElement).disabled = undoStack.length === 0;
   ($("#btn-redo") as HTMLButtonElement).disabled = redoStack.length === 0;
-}
-
-/* ============ Toast / ドキュメント状態 ============ */
-function toast(msg: string, kind: "info" | "ok" | "fx" = "info"): void {
-  const el = document.createElement("div");
-  el.className = `toast toast--${kind}`;
-  el.textContent = msg;
-  $("#toasts").appendChild(el);
-  setTimeout(() => el.classList.add("is-out"), 2200);
-  setTimeout(() => el.remove(), 2500);
-}
-
-function markDirty(): void {
-  if (state.dirty) return;
-  state.dirty = true;
-  $("#doc-dot").classList.add("doc-dot--editing");
-  const st = $("#doc-status");
-  st.textContent = "EDITING";
-  st.classList.remove("doc-status--ready");
-  st.classList.add("doc-status--editing");
 }
 
 /* ============ 前処理フィルター (背景レイヤーに適用) ============ */
@@ -598,21 +518,9 @@ function drawDragSizeBadge(g: CanvasRenderingContext2D): void {
   g.restore();
 }
 
-/** 角丸矩形のパスを構築 (canvas 標準 roundRect を使わない代替) */
-function roundRectPath(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
-  const rr = Math.min(r, w / 2, h / 2);
-  g.moveTo(x + rr, y);
-  g.arcTo(x + w, y, x + w, y + h, rr);
-  g.arcTo(x + w, y + h, x, y + h, rr);
-  g.arcTo(x, y + h, x, y, rr);
-  g.arcTo(x, y, x + w, y, rr);
-  g.closePath();
-}
-
 function drawCursor(): void {
   if (!cursorPos) return;
-  const circleCursor: ToolId[] = ["brush", "eraser", "mask-pen", "smudge", "bloat", "dodge", "burn", "filter-pen"];
-  if (!circleCursor.includes(state.tool)) return;
+  if (!CIRCLE_CURSOR_TOOLS.includes(state.tool)) return;
   const r = Math.max(2, (state.brushSize * state.zoom) / 2);
   const x = docToScreenX(cursorPos.x);
   const y = docToScreenY(cursorPos.y);
@@ -629,11 +537,6 @@ function drawCursor(): void {
   vctx.fillStyle = "rgba(255,255,255,0.9)";
   vctx.fillRect(x - 0.75, y - 0.75, 1.5, 1.5);
   vctx.restore();
-}
-
-function hexA(hex: string, a: number): string {
-  const n = parseInt(hex.slice(1), 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
 /* ants アニメーション (120ms 毎に相を進めて再描画) */
@@ -720,15 +623,6 @@ function floodMask(cx: number, cy: number, tolerance: number): HTMLCanvasElement
   }
   oc.putImageData(od, 0, 0);
   return out;
-}
-
-/** マスクcanvasを指定色に着色 */
-function tintMask(mask: HTMLCanvasElement, color: string): void {
-  const g = mask.getContext("2d")!;
-  g.globalCompositeOperation = "source-in";
-  g.fillStyle = color;
-  g.fillRect(0, 0, DOC_W, DOC_H);
-  g.globalCompositeOperation = "source-over";
 }
 
 /** 選択形状を selMask へ合成 (新規 / 追加 / 除外 — Shift/Alt 修飾優先) */
@@ -1603,14 +1497,6 @@ function onWheel(e: WheelEvent): void {
 }
 
 /* ============ UI配線: ツール / パネル ============ */
-const TOOL_ICON: Record<ToolId, string> = {
-  brush: "brush", eraser: "eraser", bucket: "bucket",
-  smudge: "smudge", bloat: "bloat", dodge: "sun", burn: "moon", "filter-pen": "sparkles",
-  line: "line", rect: "square", ellipse: "circle",
-  "select-rect": "box-select", lasso: "lasso", polygon: "pentagon", wand: "wand", "mask-pen": "pen",
-  eyedropper: "pipette", pan: "hand",
-};
-
 let dragMods: SelMode | null = null;
 
 /** ツールスタック (階層ボタン) のメイン表示を選択中ツールに追従させる */
@@ -1634,9 +1520,6 @@ function syncToolStackDisplay(tool: ToolId): void {
     mountIcons(main);
   });
 }
-
-/** 選択範囲の影響を受ける描画系ツール */
-const PAINT_TOOLS: ToolId[] = ["brush", "eraser", "bucket", "smudge", "bloat", "dodge", "burn", "filter-pen", "line", "rect", "ellipse"];
 
 /** ステータスバーの操作ガイドを更新 (選択中は「範囲内のみ」・複数対象時は「N レイヤーに適用」注記を添える) */
 function syncToolGuide(): void {
@@ -2152,14 +2035,6 @@ function bindHeaderAndModal(): void {
 }
 
 /* ============ キーボードショートカット ============ */
-const KEY_TOOL: Record<string, ToolId> = {
-  b: "brush", e: "eraser", g: "bucket",
-  s: "smudge", v: "bloat", d: "dodge", j: "burn", f: "filter-pen",
-  l: "line", u: "rect", o: "ellipse",
-  m: "select-rect", q: "lasso", p: "polygon", w: "wand", k: "mask-pen",
-  i: "eyedropper", h: "pan",
-};
-
 function syncSlider(): void {
   const el = $("#ctl-size") as HTMLInputElement;
   el.value = String(state.brushSize);
