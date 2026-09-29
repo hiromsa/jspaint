@@ -226,6 +226,50 @@ async function main(): Promise<void> {
     await new Promise((res) => setTimeout(res, 150));
     const embedSaveToast = await lastToast(page2);
     ok("embed で Ctrl+S は「完了」で返すよう案内", embedSaveToast.includes("埋め込みモード"), `toast="${embedSaveToast}"`);
+
+    /* ========== 11) パペットワープ: 640 を超えるドキュメントでも全域を変形できる ========== */
+    console.log("\n[puppet-warp]");
+    const page3 = await browser.newPage();
+    await page3.setViewport({ width: 1280, height: 800 });
+    await page3.goto(`${fileUrl}?mode=standalone`);
+    await page3.waitForSelector("#layer-list li");
+
+    await injectImage(page3, "drop", 1024, 768, "big.png");
+    await waitDocInfo(page3, "1024×768");
+
+    await page3.click('[data-tool="puppet-warp"]');
+    await new Promise((res) => setTimeout(res, 400));
+
+    // ステージ中央 (= ドキュメント中央) をクリックしてピンを追加し、ドラッグで変形
+    const viewBox = await (await page3.$("#view")).boundingBox();
+    if (!viewBox) throw new Error("#view が見つかりません");
+    const cx = viewBox.x + viewBox.width / 2;
+    const cy = viewBox.y + viewBox.height / 2;
+    await page3.mouse.move(cx, cy);
+    await page3.mouse.down();
+    await page3.mouse.move(cx + 40, cy + 20, { steps: 8 });
+    await page3.mouse.up();
+    await new Promise((res) => setTimeout(res, 300));
+
+    const dimDuring = await page3.evaluate(() => (document.querySelector("#doc-dim") as HTMLElement).textContent);
+    ok("変形プレビュー中もドキュメントサイズは不変", dimDuring === "1024×768", `dim=${dimDuring}`);
+
+    await page3.keyboard.press("Enter"); // 変形を確定
+    await new Promise((res) => setTimeout(res, 300));
+    const dimAfter = await page3.evaluate(() => (document.querySelector("#doc-dim") as HTMLElement).textContent);
+    ok("確定後もドキュメントサイズは不変", dimAfter === "1024×768", `dim=${dimAfter}`);
+    ok("確定後もレイヤー1枚のまま", (await layerCount(page3)) === 1);
+
+    // 変形後も画像全域が残っているか (640 で切り取られていないか) — サムネイルの不透明率で判定
+    const opaqueRatio = await page3.evaluate(() => {
+      const items = document.querySelectorAll("#layer-list li");
+      const thumb = items[items.length - 1].querySelector("canvas")!;
+      const d = thumb.getContext("2d")!.getImageData(0, 0, 68, 68).data;
+      let opaque = 0;
+      for (let i = 3; i < d.length; i += 4) if (d[i] > 0) opaque++;
+      return opaque / (68 * 68);
+    });
+    ok("変形後も画像が全域で維持される (640×640 で切り取られない)", opaqueRatio > 0.9, `opaqueRatio=${opaqueRatio.toFixed(2)}`);
   } finally {
     await browser.close();
   }

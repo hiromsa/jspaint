@@ -180,7 +180,7 @@ class PuppetWarpSession {
       const i = ((y | 0) * doc.width + (x | 0)) * 4;
       return od[i + 3] > 0 && (sd === null || sd[i + 3] > 0);
     };
-    return buildMesh(contains, state.puppetSpacing);
+    return buildMesh(contains, state.puppetSpacing, doc.width, doc.height);
   }
 
   /** メッシュを差し替えてセッションの状態を初期化する */

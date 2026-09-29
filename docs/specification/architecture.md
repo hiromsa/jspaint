@@ -50,6 +50,7 @@ src/
     delaunay.ts      Bowyer-Watson 法による Delaunay 三角分割 (外部依存ゼロ)
     mesh.ts          メッシュ生成 (不透明領域 × 選択範囲 → グリッド + 輪郭点 → 三角分割) と
                      PuppetPin / PuppetMesh 型 (canvas 非依存・単体検証可)
+                     ※ buildMesh / regionBounds は走査範囲 (width / height) を引数で受ける (可変ドキュメント対応)
     deformer.ts      MLS (Moving Least Squares) rigid 変形 — ピン移動から全頂点の変形先を計算
     warpPaint.ts     三角形クリップ + アフィン変換で元画像を転写 (シーム防止パッド付き)
     warpSession.ts   セッション管理 (開始 / ピン操作 / プレビュー / commit・cancel / Undo 統合)

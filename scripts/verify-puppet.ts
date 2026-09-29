@@ -65,9 +65,9 @@ const near = (a: number, b: number, eps = 1e-4): boolean => Math.abs(a - b) <= e
 /* --- 4. メッシュ生成: 矩形領域 --- */
 {
   const contains = (x: number, y: number): boolean => x >= 100 && x < 200 && y >= 80 && y < 180;
-  const b = regionBounds(contains);
+  const b = regionBounds(contains, 400, 400);
   check("regionBounds: 外接矩形", !!b && b.x0 === 100 && b.y0 === 80 && b.x1 === 199 && b.y1 === 179);
-  const mesh = buildMesh(contains, 32);
+  const mesh = buildMesh(contains, 32, 400, 400);
   check("buildMesh: メッシュ生成 (頂点4+/三角形2+)", !!mesh && mesh.vertices.length >= 4 && mesh.triangles.length >= 2);
   check("buildMesh: 初期ピンは空", !!mesh && mesh.pins.length === 0);
   const inBox = !!mesh && mesh.vertices.every((v) => v.x >= 30 && v.x <= 270 && v.y >= 10 && v.y <= 250);
@@ -76,15 +76,27 @@ const near = (a: number, b: number, eps = 1e-4): boolean => Math.abs(a - b) <= e
   check("buildMesh: 頂点に重複がない", uniq);
 }
 
+/* --- 4b. メッシュ生成: 640 を超える領域 (可変ドキュメント) --- */
+{
+  const contains = (x: number, y: number): boolean => x >= 700 && x < 900 && y >= 600 && y < 800;
+  const b = regionBounds(contains, 1000, 1000);
+  check("regionBounds: 640超の領域の外接矩形", !!b && b.x0 === 700 && b.y0 === 600 && b.x1 === 899 && b.y1 === 799);
+  const mesh = buildMesh(contains, 32, 1000, 1000);
+  const inBox = !!mesh && mesh.vertices.every((v) => v.x >= 630 && v.x <= 970 && v.y >= 530 && v.y <= 870);
+  check("buildMesh: 640超の領域もメッシュ化できる (頂点が領域近傍に収まる)", !!mesh && mesh.triangles.length >= 2 && inBox);
+  const covered = !!mesh && mesh.vertices.some((v) => v.x > 700 && v.y > 700);
+  check("buildMesh: 640超の位置に頂点が存在する", covered);
+}
+
 /* --- 5. メッシュ生成: 空領域 --- */
 {
-  check("buildMesh: 空領域 → null", buildMesh(() => false, 32) === null);
-  check("regionBounds: 空領域 → null", regionBounds(() => false) === null);
+  check("buildMesh: 空領域 → null", buildMesh(() => false, 32, 400, 400) === null);
+  check("regionBounds: 空領域 → null", regionBounds(() => false, 400, 400) === null);
 }
 
 /* --- 6. MLS: ピン 0 個は恒等変形 --- */
 {
-  const mesh = buildMesh((x, y) => x >= 100 && x < 200 && y >= 80 && y < 180, 64);
+  const mesh = buildMesh((x, y) => x >= 100 && x < 200 && y >= 80 && y < 180, 64, 400, 400);
   if (!mesh) throw new Error("buildMesh failed");
   const out = computeDeformedVertices(mesh);
   const identity = out.every((v, i) => near(v.x, mesh.vertices[i].x, 1e-9) && near(v.y, mesh.vertices[i].y, 1e-9));
@@ -93,7 +105,7 @@ const near = (a: number, b: number, eps = 1e-4): boolean => Math.abs(a - b) <= e
 
 /* --- 7. MLS: 1 ピンの平行移動 --- */
 {
-  const mesh = buildMesh((x, y) => x >= 100 && x < 200 && y >= 80 && y < 180, 64);
+  const mesh = buildMesh((x, y) => x >= 100 && x < 200 && y >= 80 && y < 180, 64, 400, 400);
   if (!mesh) throw new Error("buildMesh failed");
   mesh.pins.push({ id: 1, original: { x: 150, y: 130 }, current: { x: 170, y: 150 }, isPinned: false });
   const out = computeDeformedVertices(mesh);
@@ -141,7 +153,7 @@ const near = (a: number, b: number, eps = 1e-4): boolean => Math.abs(a - b) <= e
 /* --- 10. 逆変換 (変形後空間 → 初期空間): 変形済み状態でのピン打ち --- */
 {
   const contains = (x: number, y: number): boolean => x >= 100 && x < 200 && y >= 80 && y < 180;
-  const mesh = buildMesh(contains, 32);
+  const mesh = buildMesh(contains, 32, 400, 400);
   if (!mesh) throw new Error("buildMesh failed");
   const identity = computeDeformedVertices(mesh);
   const p = inverseDeformPoint(mesh, identity, { x: 150, y: 120 });

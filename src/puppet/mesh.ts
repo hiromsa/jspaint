@@ -3,8 +3,9 @@
  * 変形対象領域 (レイヤーの不透明ピクセル × 選択範囲) の外接矩形をグリッドで覆い、
  * 領域の輪郭サンプル点も加えて Delaunay 三角分割することで、外形に沿ったメッシュを構築する。
  * canvas に依存しない純粋ロジック (領域判定は関数で受け取る) のため単体検証が容易。
+ * ドキュメントは可変サイズのため、走査範囲 (width / height) は引数で受け取る。
  */
-import { DOC_H, DOC_W, type Pt } from "../core/types";
+import type { Pt } from "../core/types";
 import { triangulate } from "./delaunay";
 
 /** 制御点 (ピン)。original = 打った初期位置、current = 現在の移動先 */
@@ -38,11 +39,11 @@ export interface MeshBounds {
   y1: number;
 }
 
-/** 領域の外接矩形を求める。領域が空なら null */
-export function regionBounds(contains: MeshRegion): MeshBounds | null {
-  let x0 = DOC_W, y0 = DOC_H, x1 = -1, y1 = -1;
-  for (let y = 0; y < DOC_H; y++) {
-    for (let x = 0; x < DOC_W; x++) {
+/** 領域の外接矩形を求める (走査範囲は width × height)。領域が空なら null */
+export function regionBounds(contains: MeshRegion, width: number, height: number): MeshBounds | null {
+  let x0 = width, y0 = height, x1 = -1, y1 = -1;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
       if (!contains(x, y)) continue;
       if (x < x0) x0 = x;
       if (x > x1) x1 = x;
@@ -57,18 +58,19 @@ export function regionBounds(contains: MeshRegion): MeshBounds | null {
  * メッシュを生成する:
  *   外接矩形の四隅 + spacing 刻みのグリッド頂点 + 領域輪郭のサンプル点
  * を Delaunay 三角分割する。領域が空 (または三角形が作れない) なら null を返す。
+ * width / height はメッシュの許容範囲 (ドキュメント実寸)。
  */
-export function buildMesh(contains: MeshRegion, spacing: number): PuppetMesh | null {
-  const bounds = regionBounds(contains);
+export function buildMesh(contains: MeshRegion, spacing: number, width: number, height: number): PuppetMesh | null {
+  const bounds = regionBounds(contains, width, height);
   if (!bounds) return null;
   const step = Math.max(8, spacing);
 
   const points: Pt[] = [];
   const seen = new Set<number>();
   // 0.5px 量子化キーで重複点を排除 (Delaunay は重複点に弱いため)
-  const keyOf = (x: number, y: number): number => Math.round(y * 2) * (DOC_W * 2 + 4) + Math.round(x * 2);
+  const keyOf = (x: number, y: number): number => Math.round(y * 2) * (width * 2 + 4) + Math.round(x * 2);
   const addPoint = (x: number, y: number): void => {
-    if (x < 0 || y < 0 || x > DOC_W || y > DOC_H) return;
+    if (x < 0 || y < 0 || x > width || y > height) return;
     const k = keyOf(x, y);
     if (seen.has(k)) return;
     seen.add(k);
@@ -92,8 +94,8 @@ export function buildMesh(contains: MeshRegion, spacing: number): PuppetMesh | n
   let lastX = -step;
   let lastY = -step;
   const gap2 = step * 0.6 * (step * 0.6);
-  for (let y = Math.max(0, bounds.y0 - 1); y <= Math.min(DOC_H - 1, bounds.y1 + 1); y++) {
-    for (let x = Math.max(0, bounds.x0 - 1); x <= Math.min(DOC_W - 1, bounds.x1 + 1); x++) {
+  for (let y = Math.max(0, bounds.y0 - 1); y <= Math.min(height - 1, bounds.y1 + 1); y++) {
+    for (let x = Math.max(0, bounds.x0 - 1); x <= Math.min(width - 1, bounds.x1 + 1); x++) {
       if (!contains(x, y)) continue;
       const edge = !contains(x - 1, y) || !contains(x + 1, y) || !contains(x, y - 1) || !contains(x, y + 1);
       if (!edge) continue;
