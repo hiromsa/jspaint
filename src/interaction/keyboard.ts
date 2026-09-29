@@ -14,6 +14,7 @@ import { KEY_TOOL, TOOLS } from "../core/toolDefs";
 import { cancelPolygon, closePolygon } from "./pointer";
 import { setTool, syncSlider, swapColors } from "../ui/panels";
 import { closeExport, openExport } from "../ui/exportModal";
+import { warpSession } from "../puppet/warpSession";
 
 /** window へ keydown / keyup を配線する */
 export function bindKeyboard(): void {
@@ -37,6 +38,8 @@ function onKeyDown(e: KeyboardEvent): void {
   if (e.key === " ") { e.preventDefault(); state.spacePan = true; $("#stage").style.cursor = "grab"; return; }
   if (e.key === "Escape") {
     if (!($("#modal-export") as HTMLElement).hidden) { closeExport(); return; }
+    // パペットワープセッションの取消 (進行中の変形を破棄)
+    if (warpSession.active) { warpSession.cancel(); return; }
     if (interaction.polyDrag || interaction.polyPoints.length > 0) { cancelPolygon(); return; }
     if (interaction.lassoPath) { interaction.lassoPath = null; hooks.render(); hooks.toast("投げ縄選択を取消", "info"); return; }
     if (interaction.preview || interaction.dragStart) { interaction.preview = null; interaction.dragStart = null; hooks.render(); return; }
@@ -44,6 +47,7 @@ function onKeyDown(e: KeyboardEvent): void {
     if (selection.hasSelection) deselect();
     return;
   }
+  if (e.key === "Enter" && warpSession.active) { e.preventDefault(); warpSession.commit(); return; }
   if (e.key === "Enter" && state.tool === "polygon") { closePolygon(); return; }
   if (e.key === "Delete" && selection.hasSelection) {
     deleteSelectionContents();

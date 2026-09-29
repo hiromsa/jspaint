@@ -10,6 +10,7 @@ export const TOOLS: Record<ToolId, { label: string; key: string; guide: string; 
   bucket:      { label: "塗りつぶし",   key: "G", guide: "クリックで類似色領域を塗りつぶし", cursor: "crosshair" },
   smudge:      { label: "指先",         key: "S", guide: "ドラッグで色をにじませる · [ ] でサイズ", cursor: "none" },
   bloat:       { label: "膨張",         key: "V", guide: "ドラッグで領域を球面状に変形 · 長押しで持続 · [ ] でサイズ · Alt で方向を一時反転", cursor: "none" },
+  "puppet-warp": { label: "パペットワープ", key: "T", guide: "クリック=ピンを打つ (Alt=固定ピン) · ピンをドラッグ=変形 · ダブルクリック=ピン削除 · Enter=確定 / Esc=取消 · 選択範囲があればその範囲のみ", cursor: "crosshair" },
   dodge:       { label: "覆い焼き",     key: "D", guide: "ドラッグで明るく · Alt で焼き込みに反転", cursor: "none" },
   burn:        { label: "焼き込み",     key: "J", guide: "ドラッグで暗く · Alt で覆い焼きに反転", cursor: "none" },
   "filter-pen": { label: "フィルターペン", key: "F", guide: "ドラッグでなぞった範囲にフィルター設定を焼き込む · フィルタータブで内容を設定", cursor: "none" },
@@ -28,7 +29,7 @@ export const TOOLS: Record<ToolId, { label: string; key: string; guide: string; 
 /** ツール ID → アイコン名 (assets/icons.ts の ICONS キー) */
 export const TOOL_ICON: Record<ToolId, string> = {
   brush: "brush", eraser: "eraser", bucket: "bucket",
-  smudge: "smudge", bloat: "bloat", dodge: "sun", burn: "moon", "filter-pen": "sparkles",
+  smudge: "smudge", bloat: "bloat", "puppet-warp": "pin", dodge: "sun", burn: "moon", "filter-pen": "sparkles",
   line: "line", rect: "square", ellipse: "circle",
   "select-rect": "box-select", lasso: "lasso", polygon: "pentagon", wand: "wand", "mask-pen": "pen",
   eyedropper: "pipette", pan: "hand",
@@ -37,7 +38,7 @@ export const TOOL_ICON: Record<ToolId, string> = {
 /** キーボードショートカット → ツール ID */
 export const KEY_TOOL: Record<string, ToolId> = {
   b: "brush", e: "eraser", g: "bucket",
-  s: "smudge", v: "bloat", d: "dodge", j: "burn", f: "filter-pen",
+  s: "smudge", v: "bloat", t: "puppet-warp", d: "dodge", j: "burn", f: "filter-pen",
   l: "line", u: "rect", o: "ellipse",
   m: "select-rect", q: "lasso", p: "polygon", w: "wand", k: "mask-pen",
   i: "eyedropper", h: "pan",

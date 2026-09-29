@@ -1,14 +1,15 @@
 {
   "name": "jspaint",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "JSPaint - Inpainting pre-processing paint tool for SD WebUI Forge (UI mock)",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:puppet": "esbuild scripts/verify-puppet.ts --bundle --platform=node --format=esm --outfile=%TEMP%\\verify-puppet.mjs && node %TEMP%\\verify-puppet.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

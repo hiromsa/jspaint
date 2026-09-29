@@ -1,6 +1,7 @@
 /**
  * rendering/previews.ts — キャンバス上のオーバーレイ描画
- * ストローク / 選択のドラッグ中プレビュー、サイズバッジ、円形カーソル。
+ * ストローク / 選択のドラッグ中プレビュー、パペットワープのメッシュ・ピン、
+ * サイズバッジ、円形カーソル。
  */
 import { hexA, roundRectPath } from "../core/canvasUtils";
 import { state } from "../core/editorState";
@@ -8,6 +9,7 @@ import { interaction } from "../core/interactionState";
 import { selection } from "../core/selectionStore";
 import { CIRCLE_CURSOR_TOOLS } from "../core/toolDefs";
 import { docToScreenX, docToScreenY, viewport } from "../core/viewState";
+import { warpSession } from "../puppet/warpSession";
 
 export function drawStrokePreview(g: CanvasRenderingContext2D): void {
   if (!interaction.preview) return;
@@ -156,5 +158,55 @@ export function drawCursor(g: CanvasRenderingContext2D): void {
   g.stroke();
   g.fillStyle = "rgba(255,255,255,0.9)";
   g.fillRect(x - 0.75, y - 0.75, 1.5, 1.5);
+  g.restore();
+}
+
+/** パペットワープのオーバーレイ (変形後メッシュ線 + ピン) */
+export function drawPuppetWarpOverlay(g: CanvasRenderingContext2D): void {
+  const s = warpSession;
+  if (!s.active || !s.mesh) return;
+  const zoom = state.zoom;
+  const d = s.deformed;
+  g.save();
+  g.lineWidth = 1 / zoom;
+
+  // メッシュ線 (変形後の三角形の辺をまとめて 1 パスで描く)
+  g.strokeStyle = "rgba(255, 255, 255, 0.14)";
+  g.beginPath();
+  for (const { indices } of s.mesh.triangles) {
+    const [i0, i1, i2] = indices;
+    g.moveTo(d[i0].x, d[i0].y);
+    g.lineTo(d[i1].x, d[i1].y);
+    g.lineTo(d[i2].x, d[i2].y);
+    g.closePath();
+  }
+  g.stroke();
+
+  // ピン (通常=白 / 固定=青 / ホバー・ドラッグ=黄縁)。ドラッグ中は元位置に残像を出す
+  for (const pin of s.mesh.pins) {
+    const r = 5 / zoom;
+    const isHot = pin.id === s.dragPinId || pin.id === s.hoverPinId;
+    if (isHot) {
+      g.setLineDash([3 / zoom, 3 / zoom]);
+      g.strokeStyle = "rgba(251, 191, 36, 0.8)";
+      g.beginPath();
+      g.moveTo(pin.original.x, pin.original.y);
+      g.lineTo(pin.current.x, pin.current.y);
+      g.stroke();
+      g.setLineDash([]);
+      g.beginPath();
+      g.arc(pin.original.x, pin.original.y, r * 0.6, 0, Math.PI * 2);
+      g.strokeStyle = "rgba(251, 191, 36, 0.6)";
+      g.stroke();
+    }
+    g.beginPath();
+    g.arc(pin.current.x, pin.current.y, r, 0, Math.PI * 2);
+    g.fillStyle = pin.isPinned ? "#60a5fa" : "#ffffff";
+    g.fill();
+    g.strokeStyle = isHot ? "#fbbf24" : "rgba(0, 0, 0, 0.85)";
+    g.lineWidth = (isHot ? 2 : 1.5) / zoom;
+    g.stroke();
+    g.lineWidth = 1 / zoom;
+  }
   g.restore();
 }

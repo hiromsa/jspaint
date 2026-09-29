@@ -9,6 +9,7 @@ import { selection } from "../core/selectionStore";
 import { PAINT_TOOLS, TOOLS, TOOL_ICON } from "../core/toolDefs";
 import type { SelMode, ToolId } from "../core/types";
 import { render } from "../rendering/renderer";
+import { warpSession } from "../puppet/warpSession";
 import { deselect, fillSelection, selectAll } from "../core/selectionOps";
 import { $, $$, paintRangeFill } from "./dom";
 import { toast } from "./feedback";
@@ -46,6 +47,8 @@ export function syncToolGuide(): void {
 }
 
 export function setTool(tool: ToolId): void {
+  // パペットワープセッションの引継ぎ (puppet-warp に切り替えたら開始 / 離脱時は自動確定)
+  warpSession.handleToolChange(tool);
   state.tool = tool;
   $$(".toolbtn").forEach((b) => b.classList.toggle("is-active", b.dataset.tool === tool));
   const info = TOOLS[tool];
@@ -184,6 +187,15 @@ export function bindControls(): void {
       $$(".seg__btn[data-bloat-dir]").forEach((b) => b.classList.toggle("is-active", b === btn));
     }),
   );
+
+  // パペットワープ (メッシュ間隔 / 確定 / 取消)
+  ($("#ctl-mesh") as HTMLInputElement).addEventListener("input", (e) => {
+    state.puppetSpacing = Number((e.target as HTMLInputElement).value);
+    $("#ctl-mesh-val").textContent = `${state.puppetSpacing} px`;
+    warpSession.rebuildMesh();
+  });
+  $("#btn-warp-apply").addEventListener("click", () => warpSession.commit());
+  $("#btn-warp-cancel").addEventListener("click", () => warpSession.cancel());
 
   // すべて選択
   $("#btn-select-all").addEventListener("click", selectAll);

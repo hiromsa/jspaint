@@ -71,6 +71,10 @@
         <button class="toolbtn" data-tool="filter-pen" title="フィルターペン (F) — ドラッグでなぞった範囲にフィルター設定を適用"><i data-icon="sparkles"></i></button>
       </div>
       <span class="hrule"></span>
+      <div class="toolgroup" role="group" aria-label="変形">
+        <button class="toolbtn" data-tool="puppet-warp" title="パペットワープ (T) — ピンを打ってドラッグでメッシュ変形 · Enter=確定 / Esc=取消"><i data-icon="pin"></i></button>
+      </div>
+      <span class="hrule"></span>
       <div class="toolgroup" role="group" aria-label="図形">
         <button class="toolbtn" data-tool="line"    title="直線 (L)"><i data-icon="line"></i></button>
         <button class="toolbtn" data-tool="rect"    title="矩形 (U)"><i data-icon="square"></i></button>
@@ -183,6 +187,21 @@
           <p class="fx-desc" data-show="bloat">ブラシ中心を基準に画像を球面状に変形します (リキフィの膨張 / 収縮)。「サイズ」= radius (影響範囲)、「強さ (膨張)」= strength (ピクセルの移動量) です。ピクセルはブラシ中心から<b>外側へ</b>移動するため、ある方向へ膨らませたいときはブラシをその逆側に置いてください。長押ししている間、その場で変形が持続します。選択範囲があればその内側のみに作用します。</p>
 
           <p class="fx-desc" data-show="filter-pen">フィルタータブで有効にしたフィルターを、なぞった範囲に直接焼き込みます。1 ストローク内では効果が積み重ならず (開始時の画像を基準に置き換え)、選択範囲があればその内側のみに作用します。</p>
+
+          <div class="ctrl" data-show="puppet-warp">
+            <div class="ctrl__row">
+              <label for="ctl-mesh">メッシュ間隔</label>
+              <span class="ctrl__val mono" id="ctl-mesh-val">32 px</span>
+            </div>
+            <input type="range" id="ctl-mesh" min="16" max="64" step="8" value="32" />
+          </div>
+
+          <p class="fx-desc" data-show="puppet-warp">ピンを打った位置を基準にメッシュ (三角分割) 全体を滑らかに変形します。<b>クリック</b>=ピンを打つ (<b>Alt+クリック</b>=固定ピン / 青表示) · ピンの<b>ドラッグ</b>=変形 · ピンの<b>ダブルクリック</b>=削除。<b>Enter</b>で確定 / <b>Esc</b>で取消。選択範囲があればその範囲内のみ変形し、編集対象レイヤーすべてに適用されます。ツールを切り替えると変形は自動確定されます。</p>
+
+          <div class="ctrl sel-actions" data-show="puppet-warp">
+            <button class="btn btn--primary" id="btn-warp-apply" title="変形をレイヤーに焼き込む (Enter)"><i data-icon="check"></i>確定</button>
+            <button class="btn btn--ghost" id="btn-warp-cancel" title="変形を破棄して元に戻す (Esc)"><i data-icon="x"></i>取消</button>
+          </div>
 
           <div class="ctrl" data-show="select-rect,lasso,polygon,wand,mask-pen">
             <div class="ctrl__label">選択合成モード <span class="ctrl__sub">Shift=追加 / Alt=除外</span></div>
@@ -306,7 +325,7 @@
     <div class="statusbar__group">
       <span class="mono st-zoom" id="st-zoom">100%</span>
       <span class="vdiv"></span>
-      <span class="mono st-ver">JSPaint v0.1.0-mock · TypeScript</span>
+      <span class="mono st-ver">JSPaint v0.1.6 · TypeScript</span>
     </div>
   </footer>
 

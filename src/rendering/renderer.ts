@@ -8,7 +8,8 @@ import { state } from "../core/editorState";
 import { selection } from "../core/selectionStore";
 import { viewport } from "../core/viewState";
 import { DOC_H, DOC_W } from "../core/types";
-import { drawCursor, drawDragSizeBadge, drawSelectionPreview, drawStrokePreview } from "./previews";
+import { warpSession } from "../puppet/warpSession";
+import { drawCursor, drawDragSizeBadge, drawPuppetWarpOverlay, drawSelectionPreview, drawStrokePreview } from "./previews";
 
 export const view = document.querySelector("#view") as HTMLCanvasElement;
 export const vctx = view.getContext("2d")!;
@@ -49,12 +50,13 @@ export function render(): void {
   // 背景レイヤー (前処理フィルター — 選択範囲がある場合はその範囲のみ適用)
   filters.drawBaseLayer(vctx);
 
-  // ペイントレイヤー (下 → 上)
+  // ペイントレイヤー (下 → 上)。パペットワープ中は変形プレビューに差し替える
   for (const l of doc.layers) {
-    if (l.kind === "paint" && l.visible) vctx.drawImage(l.canvas, 0, 0);
+    if (l.kind === "paint" && l.visible) vctx.drawImage(warpSession.displayCanvas(l.id) ?? l.canvas, 0, 0);
   }
 
   drawStrokePreview(vctx);
+  drawPuppetWarpOverlay(vctx);
   drawSelectionPreview(vctx);
 
   vctx.restore();

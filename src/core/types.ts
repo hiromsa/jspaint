@@ -11,7 +11,7 @@ export const DOC_H = 640;
 /** ツール ID (ツールボックスの全ボタンと 1:1 対応) */
 export type ToolId =
   | "brush" | "eraser" | "bucket"
-  | "smudge" | "bloat" | "dodge" | "burn" | "filter-pen"
+  | "smudge" | "bloat" | "puppet-warp" | "dodge" | "burn" | "filter-pen"
   | "line" | "rect" | "ellipse"
   | "select-rect" | "lasso" | "polygon" | "wand" | "mask-pen"
   | "eyedropper" | "pan";

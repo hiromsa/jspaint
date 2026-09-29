@@ -15,6 +15,8 @@ export const state = {
   selMode: "new" as SelMode,
   /** 膨張ブラシの効果方向: 1 = 膨張 / -1 = 収縮 (Alt で一時反転) */
   bloatDir: 1 as 1 | -1,
+  /** パペットワープのメッシュ間隔 (px)。セッション中に変更するとメッシュを作り直す */
+  puppetSpacing: 32,
   zoom: 1,
   panX: 0,
   panY: 0,

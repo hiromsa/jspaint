@@ -9,11 +9,13 @@ import { filters } from "../core/filterEngine";
 import { interaction } from "../core/interactionState";
 import { selection } from "../core/selectionStore";
 import { state } from "../core/editorState";
+import { TOOLS } from "../core/toolDefs";
 import { screenToDoc, setZoom } from "../core/viewState";
 import { DOC_H, DOC_W } from "../core/types";
 import { $ } from "../ui/dom";
 import { markDirty, toast } from "../ui/feedback";
 import { render, view } from "../rendering/renderer";
+import { PIN_HIT_RADIUS, warpSession } from "../puppet/warpSession";
 import {
   BLOAT_HOLD_RATE,
   bloatSign,
@@ -84,6 +86,26 @@ function onPointerDown(e: PointerEvent): void {
       markDirty();
       beginFilterPenStroke(d);
       interaction.filterPenLast = d;
+      break;
+    }
+    case "puppet-warp": {
+      // セッションが無い (開始に失敗した / 空のレイヤー等) 場合は再試行
+      if (!warpSession.active) {
+        warpSession.start();
+        break;
+      }
+      const hit = warpSession.pickPin(d, PIN_HIT_RADIUS / state.zoom);
+      if (hit && hit.isPinned) {
+        toast("固定ピンは移動できません · ダブルクリックで削除", "info");
+        break;
+      }
+      if (hit) {
+        warpSession.dragPinId = hit.id;
+      } else {
+        // クリックした位置にピンを打ち、押したままドラッグで調整できる
+        warpSession.addPin(d, e.altKey);
+        if (e.altKey) toast("固定ピンを追加", "info");
+      }
       break;
     }
     case "line":
@@ -208,6 +230,9 @@ function onPointerMove(e: PointerEvent): void {
   } else if (interaction.lassoPath) {
     const lastP = interaction.lassoPath[interaction.lassoPath.length - 1];
     if (Math.hypot(d.x - lastP.x, d.y - lastP.y) * state.zoom > 2) interaction.lassoPath.push(d);
+  } else if (warpSession.dragPinId != null) {
+    // パペットワープ: ドラッグ中ピンを追従させ、メッシュ変形プレビューを更新
+    warpSession.moveDragPin(d);
   } else if (interaction.maskStroke) {
     selection.paintMaskSegment(interaction.maskStroke.last, d);
     interaction.maskStroke.last = d;
@@ -222,6 +247,14 @@ function onPointerMove(e: PointerEvent): void {
   } else if (state.tool === "polygon" && interaction.polyPoints.length > 0) {
     interaction.polyHover = d;
   }
+
+  // パペットワープ: ホバー中ピンの追跡 (カーソル形状のフィードバック)
+  if (state.tool === "puppet-warp" && warpSession.active && warpSession.dragPinId == null) {
+    const hit = warpSession.pickPin(d, PIN_HIT_RADIUS / state.zoom);
+    warpSession.hoverPinId = hit?.id ?? null;
+    stage.style.cursor = hit ? "pointer" : TOOLS[state.tool].cursor;
+  }
+
   render();
 }
 
@@ -319,6 +352,7 @@ function onPointerUp(): void {
   }
 
   stopBloatHold();
+  warpSession.endDrag();
   interaction.strokeLast = null;
   interaction.retouchLast = null;
   interaction.filterPenLast = null;
@@ -389,7 +423,14 @@ export function bindCanvasEvents(): void {
   });
   view.addEventListener("wheel", onWheel, { passive: false });
   view.addEventListener("contextmenu", (e) => e.preventDefault());
-  view.addEventListener("dblclick", () => {
-    if (state.tool === "polygon") closePolygon();
+  view.addEventListener("dblclick", (e) => {
+    if (state.tool === "polygon") { closePolygon(); return; }
+    // パペットワープ: ピンをダブルクリックで削除
+    if (state.tool === "puppet-warp" && warpSession.active) {
+      const s = localPos(e);
+      const d = screenToDoc(s.x, s.y);
+      const hit = warpSession.pickPin(d, PIN_HIT_RADIUS / state.zoom);
+      if (hit) warpSession.deletePin(hit.id);
+    }
   });
 }
