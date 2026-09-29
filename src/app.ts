@@ -70,6 +70,10 @@ export function startApp(): void {
   // core からの UI 更新は hooks 経由で行う (実装をここで差し込む)
   setHooks({ render, toast, markDirty, syncToolGuide, renderLayers, updateUndoButtons, syncFilterUI, syncZoomUI, syncDocInfo });
   doc.init(createDemoImage());
+  // 起動直後 (デモ画像をそのまま編集するケース) も選択マスクを実寸へ合わせる。
+  // resizeTo は画像読み込み (documentOps.applyBaseImage) 時にしか呼ばれないと、
+  // デモ画像上での選択が 1x1 マスクに限定され、Marching Ants も表示されない
+  selection.resizeTo(doc.width, doc.height);
 
   resizeView();
   fitView();

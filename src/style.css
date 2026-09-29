@@ -327,9 +327,10 @@ html[data-host-mode="embed"] [data-standalone-only] { display: none !important; 
 .ctrl__val { font-size: 11px; color: var(--text); }
 .ctrl__label { font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 7px; }
 .ctrl__sub { font-weight: 400; font-size: 10.5px; color: var(--text-3); margin-left: 4px; }
-/* data-show (ツール別表示切替) 対象の汎用非表示。panels.ts setTool() が is-hidden を付与する
-   (fx-desc / data-fx-scope コンテナなど class="ctrl" を持たない要素も非表示にするため要素非依存) */
-.is-hidden { display: none; }
+/* data-show (ツール別表示切替) 対象の汎用非表示。panels.ts setTool() が is-hidden を付与する。
+   !important 必須: .btn 等の display 定義 (後続行) が同じ詳細度で上書きし、
+   is-hidden が効かなくなる (確定/取消等のボタンが全ツールで表示される) ため */
+.is-hidden { display: none !important; }
 
 /* スライダー */
 input[type="range"] {

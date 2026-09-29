@@ -178,6 +178,48 @@ async function main(): Promise<void> {
     ok("他のツール選択時は他ツール用の説明文 (fx-desc) も非表示になる", await page.evaluate(() =>
       getComputedStyle(document.querySelector('p.fx-desc[data-show="bloat"]') as HTMLElement).display === "none",
     ));
+
+    /* --- 6) 起動直後のデモ画像上でも選択と Marching Ants が機能する --- */
+    await page.click('[data-tool="select-rect"]');
+    await new Promise((r) => setTimeout(r, 150));
+    await page.mouse.move(cx - 120, cy - 90);
+    await page.mouse.down();
+    await page.mouse.move(cx + 120, cy + 90, { steps: 10 });
+    await page.mouse.up();
+    await new Promise((r) => setTimeout(r, 300));
+    // 選択矩形の上辺帯 (画面中央より上) を走査し、白破線 (ants) のピクセルを数える
+    const antsWhite = await page.evaluate(() => {
+      const view = document.querySelector("#view") as HTMLCanvasElement;
+      const g = view.getContext("2d")!;
+      const w = view.width;
+      const h = view.height;
+      const band = g.getImageData(Math.round(w / 2) - 150, Math.round(h / 2) - 110, 300, 45).data;
+      let count = 0;
+      for (let i = 0; i < band.length; i += 4) {
+        if (band[i] > 235 && band[i + 1] > 235 && band[i + 2] > 235) count++;
+      }
+      return count;
+    });
+    ok("矩形選択で Marching Ants (点線) が表示される", antsWhite > 3, `whitePixels=${antsWhite}`);
+
+    /* --- 7) ツール別パネルの表示整理: 選択中ツールと無関係なボタンは出ない --- */
+    const SEL_TOOLS = ["select-rect", "lasso", "polygon", "wand", "mask-pen"];
+    for (const tool of ["brush", "bucket", "filter-pen", "select-rect", "puppet-warp"]) {
+      await page.click(`[data-tool="${tool}"]`);
+      await new Promise((r) => setTimeout(r, 120));
+      const labels = await page.evaluate(() =>
+        Array.from(document.querySelectorAll<HTMLElement>("#panel-tool button"))
+          .filter((b) => b.offsetParent !== null)
+          .map((b) => (b.textContent ?? "").trim() || b.id),
+      );
+      // 「確定/取消」= パペットワープ専用、「塗りつぶし/解除」= 選択系ツール専用
+      const stray = labels.filter((label) => {
+        if (label === "確定" || label === "取消") return tool !== "puppet-warp";
+        if (label === "塗りつぶし" || label === "解除") return !SEL_TOOLS.includes(tool);
+        return false;
+      });
+      ok(`${tool} 選択時に無関係なボタン (確定/取消/塗りつぶし/解除) が表示されない`, stray.length === 0, `stray=${stray.join(",")}`);
+    }
   } finally {
     await browser.close();
   }
