@@ -123,7 +123,7 @@ async function main(): Promise<void> {
     await page.click('[data-tool="filter-pen"]');
     await new Promise((r) => setTimeout(r, 150));
     ok("フィルターペンに切替するとツールタブに専用設定が出る", await page.evaluate(() =>
-      (document.querySelector('[data-fx-scope="pen"]') as HTMLElement).classList.contains("is-hidden") === false,
+      getComputedStyle(document.querySelector('[data-fx-scope="pen"]') as HTMLElement).display !== "none",
     ));
 
     const beforePath = await viewPixel(page, ON_PATH[0], ON_PATH[1]);
@@ -173,7 +173,10 @@ async function main(): Promise<void> {
     await page.click('[data-tool="brush"]');
     await new Promise((r) => setTimeout(r, 150));
     ok("他のツール選択時はフィルター効果セクションを非表示にする", await page.evaluate(() =>
-      (document.querySelector('[data-fx-scope="pen"]') as HTMLElement).classList.contains("is-hidden") === true,
+      getComputedStyle(document.querySelector('[data-fx-scope="pen"]') as HTMLElement).display === "none",
+    ));
+    ok("他のツール選択時は他ツール用の説明文 (fx-desc) も非表示になる", await page.evaluate(() =>
+      getComputedStyle(document.querySelector('p.fx-desc[data-show="bloat"]') as HTMLElement).display === "none",
     ));
   } finally {
     await browser.close();

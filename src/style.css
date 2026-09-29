@@ -327,7 +327,9 @@ html[data-host-mode="embed"] [data-standalone-only] { display: none !important; 
 .ctrl__val { font-size: 11px; color: var(--text); }
 .ctrl__label { font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 7px; }
 .ctrl__sub { font-weight: 400; font-size: 10.5px; color: var(--text-3); margin-left: 4px; }
-.ctrl.is-hidden { display: none; }
+/* data-show (ツール別表示切替) 対象の汎用非表示。panels.ts setTool() が is-hidden を付与する
+   (fx-desc / data-fx-scope コンテナなど class="ctrl" を持たない要素も非表示にするため要素非依存) */
+.is-hidden { display: none; }
 
 /* スライダー */
 input[type="range"] {
@@ -416,7 +418,6 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
   font-size: 11.5px; color: var(--text-3);
   border: 1px dashed var(--border-2); border-radius: var(--r-md);
 }
-.empty-note.is-hidden { display: none; }
 
 /* ============================================================
    Filter Tab (purple accent)
