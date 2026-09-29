@@ -11,22 +11,12 @@ import { history } from "../core/historyStack";
 import { deleteSelectionContents, deselect, fillSelection, selectAll } from "../core/selectionOps";
 import { fitView, setZoom } from "../core/viewState";
 import { KEY_TOOL, TOOLS } from "../core/toolDefs";
-import type { ToolId } from "../core/types";
 import { cancelPolygon, closePolygon } from "./pointer";
-
-export interface KeyboardDeps {
-  openExport(): void;
-  closeExport(): void;
-  setTool(tool: ToolId): void;
-  syncSlider(): void;
-  swapColors(): void;
-}
-
-let deps: KeyboardDeps;
+import { setTool, syncSlider, swapColors } from "../ui/panels";
+import { closeExport, openExport } from "../ui/exportModal";
 
 /** window へ keydown / keyup を配線する */
-export function bindKeyboard(d: KeyboardDeps): void {
-  deps = d;
+export function bindKeyboard(): void {
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup", onKeyUp);
 }
@@ -41,12 +31,12 @@ function onKeyDown(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && k === "y") { e.preventDefault(); history.redo(); return; }
   if ((e.ctrlKey || e.metaKey) && k === "a") { e.preventDefault(); selectAll(); return; }
   if ((e.ctrlKey || e.metaKey) && k === "d") { e.preventDefault(); deselect(); return; }
-  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); deps.openExport(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); openExport(); return; }
   if (e.altKey && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); fillSelection(); return; }
 
   if (e.key === " ") { e.preventDefault(); state.spacePan = true; $("#stage").style.cursor = "grab"; return; }
   if (e.key === "Escape") {
-    if (!($("#modal-export") as HTMLElement).hidden) { deps.closeExport(); return; }
+    if (!($("#modal-export") as HTMLElement).hidden) { closeExport(); return; }
     if (interaction.polyDrag || interaction.polyPoints.length > 0) { cancelPolygon(); return; }
     if (interaction.lassoPath) { interaction.lassoPath = null; hooks.render(); hooks.toast("投げ縄選択を取消", "info"); return; }
     if (interaction.preview || interaction.dragStart) { interaction.preview = null; interaction.dragStart = null; hooks.render(); return; }
@@ -61,10 +51,10 @@ function onKeyDown(e: KeyboardEvent): void {
   }
 
   if (e.ctrlKey || e.metaKey || e.altKey) return;
-  if (KEY_TOOL[k]) { deps.setTool(KEY_TOOL[k]); return; }
-  if (k === "x") { deps.swapColors(); return; }
-  if (k === "[") { state.brushSize = Math.max(1, state.brushSize - Math.max(1, Math.round(state.brushSize * 0.15))); deps.syncSlider(); return; }
-  if (k === "]") { state.brushSize = Math.min(200, state.brushSize + Math.max(1, Math.round(state.brushSize * 0.15))); deps.syncSlider(); return; }
+  if (KEY_TOOL[k]) { setTool(KEY_TOOL[k]); return; }
+  if (k === "x") { swapColors(); return; }
+  if (k === "[") { state.brushSize = Math.max(1, state.brushSize - Math.max(1, Math.round(state.brushSize * 0.15))); syncSlider(); return; }
+  if (k === "]") { state.brushSize = Math.min(200, state.brushSize + Math.max(1, Math.round(state.brushSize * 0.15))); syncSlider(); return; }
   if (e.key === "+" || e.key === "=") { setZoom(state.zoom * 1.25); return; }
   if (e.key === "-") { setZoom(state.zoom / 1.25); return; }
   if (e.key === "0") { setZoom(1); return; }
