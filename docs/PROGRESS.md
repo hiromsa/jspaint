@@ -13,6 +13,9 @@ TypeScript 実装の原型として、描画/選択/フィルター/エクスポ
 - Vite + TypeScript。ビルドは単一HTML (`vite-plugin-singlefile`, `dist/index.html`) で file:// 単体起動可
 - Photoshop/Figma ライクな高密度ダークテーマ (ui.md スタイルガイド準拠)
 - Header / Toolbox / Workspace / Properties(3タブ) / StatusBar + Export モーダル
+- **モジュール構成** (詳細は [docs/specification/architecture.md](./specification/architecture.md)):
+  `core/` (ストア・ロジック) / `painting/` (ツール) / `rendering/` (描画) / `interaction/` (入力) / `ui/` (DOM配線)。
+  core→UI の逆依存は hooks (`core/hooks.ts`) 経由、`app.ts` は生成と配線のみ (~80行)
 
 ### キャンバスエンジン
 - 640×640 ステージ。「ドキュメント中心基準」の screen⇔doc 変換 (ズーム 5〜800%、パン、fit)
@@ -64,6 +67,7 @@ TypeScript 実装の原型として、描画/選択/フィルター/エクスポ
 | 7 | レタッチツール (指先 / 覆い焼き / 焼き込み) が背景レイヤー固定で作用する不具合を修正 (編集対象レイヤーに作用)。編集対象レイヤーの複数指定 (Ctrl+クリック) を追加し、描画・レタッチ・選択範囲操作を対象レイヤー全体に適用。Undo/Redo を複数レイヤースナップショット対応に拡張。`Esc` キーで選択範囲クリア (進行中の選択操作は先に取消)。docs 更新 |
 | 8 | ノイズフィルターにカラー / グレー切替を追加 (既定はカラー)。**フィルターペン (`F`)** を追加 — フィルタータブで有効中のフィルターを、ペンでなぞった範囲に直接焼き込むツール (1ストローク内は効果一定、選択範囲限定・複数レイヤー適用・Undo対応)。docs 更新 |
 | 9 | **膨張ブラシ (`V`)** を追加 — ブラシ中心を基準にピクセルを放射状に押し広げるリキフィ系ツール (逆マッピング + premultiply バイリニア補間)。「押しっぱなしで時間ベースに持続適用」する rAF ホールドループ (ドラッグ時の全強度スタンプ連射を廃止し適用を一本化)、「効果の方向」(膨張 / 収縮) パラメータ、`Alt` 一時反転を実装。初回実装でバイリニア補間の**ハーフピクセル・オフセット** (インデックス化時に -0.5 せず、毎スタンプ (-0.5, -0.5) px のドリフトが蓄積して画像が左上へ流れる) を発見し修正。ヘッドレスブラウザ E2E (実ポインタイベント + ピクセル変位計測) で放射対称性を検証。docs 更新 |
+| 10 | **機能単位へのリファクタリング** — 単一ファイルだった `app.ts` (約2,240行) を `core/` `painting/` `rendering/` `interaction/` `ui/` `assets/` の計25モジュールへ分割。状態はストア (doc / selection / history / filters) にカプセル化し、core→UI の逆依存は hooks パターンで解消 (`app.ts` は生成と配線のみ ~80行)。動作仕様は変更なし。検証は各ステップで `typecheck` + `build`。詳細は `docs/specification/architecture.md` を参照 |
 
 ## 次回候補 (Backlog)
 
