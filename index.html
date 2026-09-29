@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>JSPaint — Inpainting Editor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- ======================= Header (Top Bar) ======================= -->
+  <header class="topbar">
+    <div class="topbar__group">
+      <div class="brand" title="JSPaint — Inpainting 前処理エディタ">
+        <div class="brand__logo"><i data-icon="brush"></i></div>
+        <div class="brand__text">
+          <span class="brand__name">JSPaint</span>
+          <span class="brand__badge">Inpainting</span>
+        </div>
+      </div>
+      <span class="vdiv"></span>
+      <button id="btn-undo" class="iconbtn" title="元に戻す (Ctrl+Z)"><i data-icon="undo"></i></button>
+      <button id="btn-redo" class="iconbtn" title="やり直す (Ctrl+Y)"><i data-icon="redo"></i></button>
+      <span class="vdiv"></span>
+      <button id="btn-zoomout" class="iconbtn" title="縮小 (- / Ctrl+ホイール)"><i data-icon="zoom-out"></i></button>
+      <button id="btn-zoom-label" class="zoom-label mono" title="拡大倍率を100%にリセット (0)">100%</button>
+      <button id="btn-zoomin" class="iconbtn" title="拡大 (+ / Ctrl+ホイール)"><i data-icon="zoom-in"></i></button>
+      <button id="btn-fit" class="iconbtn" title="画面に合わせる (1)"><i data-icon="maximize"></i></button>
+    </div>
+
+    <div class="topbar__center">
+      <span class="doc-dot" id="doc-dot"></span>
+      <span class="doc-name">sample_photo.png</span>
+      <span class="mono doc-dim">640×640</span>
+      <span id="doc-status" class="doc-status doc-status--ready">READY</span>
+    </div>
+
+    <div class="topbar__group">
+      <button id="btn-cancel" class="btn btn--ghost" title="編集を破棄して初期状態に戻す">キャンセル</button>
+      <button id="btn-export" class="btn btn--primary" title="Inpainting用 合成画像とマスクをエクスポート (Ctrl+Enter)"><i data-icon="check"></i>完了 (Export)</button>
+    </div>
+  </header>
+
+  <!-- ======================= Main ======================= -->
+  <div class="main">
+
+    <!-- Toolbox (Left Bar) -->
+    <aside class="toolbox">
+      <div class="toolgroup" role="group" aria-label="描画">
+        <button class="toolbtn is-active" data-tool="brush"   title="ブラシ (B)"><i data-icon="brush"></i></button>
+        <button class="toolbtn" data-tool="eraser"  title="消しゴム (E)"><i data-icon="eraser"></i></button>
+        <button class="toolbtn" data-tool="bucket"  title="塗りつぶし (G)"><i data-icon="bucket"></i></button>
+      </div>
+      <span class="hrule"></span>
+      <div class="toolgroup" role="group" aria-label="レタッチ">
+        <button class="toolbtn" data-tool="smudge" title="指先 — ドラッグで色をにじませる (S)"><i data-icon="smudge"></i></button>
+        <button class="toolbtn" data-tool="bloat" title="膨張 (V) — ドラッグで領域を球面状に変形 · 長押しで持続 · 効果の方向 (膨張/収縮) は右パネルで切替 · Altで一時反転"><i data-icon="bloat"></i></button>
+        <div class="toolstack" data-stack="dodge,burn">
+          <button class="toolbtn" data-tool="dodge" title="覆い焼き (D) — ドラッグで明るく · Altで焼き込みに反転"><i data-icon="sun"></i></button>
+          <button class="toolstack__caret" title="覆い焼き / 焼き込み を切り替え"><i data-icon="chevron-right"></i></button>
+          <div class="toolstack__pop" hidden>
+            <button class="toolbtn" data-tool="dodge" title="覆い焼き (D) — ドラッグで明るく"><i data-icon="sun"></i></button>
+            <button class="toolbtn" data-tool="burn" title="焼き込み (J) — ドラッグで暗く"><i data-icon="moon"></i></button>
+          </div>
+        </div>
+        <button class="toolbtn" data-tool="filter-pen" title="フィルターペン (F) — ドラッグでなぞった範囲にフィルター設定を適用"><i data-icon="sparkles"></i></button>
+      </div>
+      <span class="hrule"></span>
+      <div class="toolgroup" role="group" aria-label="図形">
+        <button class="toolbtn" data-tool="line"    title="直線 (L)"><i data-icon="line"></i></button>
+        <button class="toolbtn" data-tool="rect"    title="矩形 (U)"><i data-icon="square"></i></button>
+        <button class="toolbtn" data-tool="ellipse" title="円 (O)"><i data-icon="circle"></i></button>
+      </div>
+      <span class="hrule"></span>
+      <div class="toolgroup" role="group" aria-label="選択">
+        <button class="toolbtn toolbtn--sel" data-tool="select-rect" title="矩形選択 (M)"><i data-icon="box-select"></i></button>
+        <button class="toolbtn toolbtn--sel" data-tool="lasso"   title="投げ縄選択 (Q)"><i data-icon="lasso"></i></button>
+        <button class="toolbtn toolbtn--sel" data-tool="polygon" title="多角形選択 (P) — ダブルクリック/Enter で確定"><i data-icon="pentagon"></i></button>
+        <button class="toolbtn toolbtn--sel" data-tool="wand"    title="自動選択・魔法の杖 (W)"><i data-icon="wand"></i></button>
+        <button class="toolbtn toolbtn--sel" data-tool="mask-pen" title="選択ペン (K) — ドラッグでマスクを直接描く"><i data-icon="pen"></i></button>
+      </div>
+      <span class="hrule"></span>
+      <div class="toolgroup" role="group" aria-label="操作">
+        <button class="toolbtn" data-tool="eyedropper" title="スポイト (I)"><i data-icon="pipette"></i></button>
+        <button class="toolbtn" data-tool="pan"        title="手のひら (H / Space長押し)"><i data-icon="hand"></i></button>
+      </div>
+
+      <div class="toolbox__spacer"></div>
+      <div class="color-well" title="描画色 (手前) / 背景色 (奥) — クリックで編集">
+        <button id="swatch-bg" class="swatch swatch--bg" aria-label="背景色"></button>
+        <button id="swatch-fg" class="swatch swatch--fg" aria-label="描画色"></button>
+      </div>
+      <button id="btn-swap-colors" class="iconbtn iconbtn--sm" title="描画色と背景色を入れ替え (X)"><i data-icon="swap"></i></button>
+      <input type="color" id="color-input" class="sr-only" value="#2563eb" />
+    </aside>
+
+    <!-- Workspace (Stage) -->
+    <div class="workspace" id="workspace">
+      <div class="stage" id="stage">
+        <canvas id="view"></canvas>
+      </div>
+      <div class="ws-meta mono" id="ws-meta">640 × 640 px · <span id="ws-zoom">100%</span></div>
+    </div>
+
+    <!-- Properties Panel (Right) -->
+    <aside class="props">
+      <nav class="tabs" role="tablist">
+        <button class="tab is-active" data-tab="tool"   role="tab"><i data-icon="sliders"></i>ツール</button>
+        <button class="tab" data-tab="filter" role="tab"><i data-icon="sparkles"></i>フィルター</button>
+        <button class="tab" data-tab="layers" role="tab"><i data-icon="layers"></i>レイヤー</button>
+      </nav>
+      <div class="props__body">
+
+        <!-- ========== Tab 1: ツール設定 ========== -->
+        <section class="panel is-active" id="panel-tool" role="tabpanel">
+          <header class="panel__head">
+            <h2 id="tool-title">ブラシ</h2>
+            <span class="panel__hint mono" id="tool-shortcut">B</span>
+          </header>
+
+          <div class="ctrl" data-show="brush,eraser,line,rect,ellipse,mask-pen,smudge,bloat,dodge,burn,filter-pen">
+            <div class="ctrl__row">
+              <label for="ctl-size">サイズ</label>
+              <span class="ctrl__val mono" id="ctl-size-val">24 px</span>
+            </div>
+            <input type="range" id="ctl-size" min="1" max="200" value="24" />
+            <div class="quick-sizes" role="group" aria-label="クイックサイズ">
+              <button class="chip mono" data-size="4">4</button>
+              <button class="chip mono" data-size="16">16</button>
+              <button class="chip mono" data-size="32">32</button>
+              <button class="chip mono" data-size="64">64</button>
+            </div>
+          </div>
+
+          <div class="ctrl" data-show="brush,eraser,line,rect,ellipse,mask-pen,smudge,bloat,dodge,burn,filter-pen">
+            <div class="ctrl__row">
+              <label for="ctl-opacity" id="opacity-label">不透明度</label>
+              <span class="ctrl__val mono" id="ctl-opacity-val">100 %</span>
+            </div>
+            <input type="range" id="ctl-opacity" min="1" max="100" value="100" />
+          </div>
+
+          <div class="ctrl" data-show="bloat">
+            <div class="ctrl__label">効果の方向 <span class="ctrl__sub">Alt = 一時的に反転</span></div>
+            <div class="seg" role="group" aria-label="効果の方向">
+              <button class="seg__btn is-active" data-bloat-dir="1" title="膨張 — 中心から外側へ押し広げる">膨張</button>
+              <button class="seg__btn" data-bloat-dir="-1" title="収縮 — 外側から中心へ押し込む">収縮</button>
+            </div>
+          </div>
+
+          <div class="ctrl" data-show="line,rect,ellipse">
+            <label class="check">
+              <input type="checkbox" id="ctl-fill" checked />
+              <span class="check__box"></span>
+              図形の内側を塗りつぶす
+            </label>
+          </div>
+
+          <div class="ctrl" data-show="bucket,wand">
+            <div class="ctrl__row">
+              <label for="ctl-tolerance" id="tol-label">許容度</label>
+              <span class="ctrl__val mono" id="ctl-tolerance-val">25</span>
+            </div>
+            <input type="range" id="ctl-tolerance" min="0" max="100" value="25" />
+          </div>
+
+          <div class="ctrl" data-show="brush,eraser,mask-pen,smudge,bloat,dodge,burn,filter-pen">
+            <div class="brush-preview">
+              <div class="brush-preview__stage" id="brush-stage">
+                <div class="brush-preview__dot" id="brush-dot"></div>
+              </div>
+              <span class="brush-preview__label mono" id="brush-preview-label">⌀ 24 px</span>
+            </div>
+          </div>
+
+          <p class="fx-desc" data-show="smudge,dodge,burn">編集対象レイヤー (レイヤータブで指定・既定はアクティブレイヤー) に直接作用します。塗りの強さは「不透明度」スライダーで調整できます。</p>
+
+          <p class="fx-desc" data-show="bloat">ブラシ中心を基準に画像を球面状に変形します (リキフィの膨張 / 収縮)。「サイズ」= radius (影響範囲)、「強さ (膨張)」= strength (ピクセルの移動量) です。ピクセルはブラシ中心から<b>外側へ</b>移動するため、ある方向へ膨らませたいときはブラシをその逆側に置いてください。長押ししている間、その場で変形が持続します。選択範囲があればその内側のみに作用します。</p>
+
+          <p class="fx-desc" data-show="filter-pen">フィルタータブで有効にしたフィルターを、なぞった範囲に直接焼き込みます。1 ストローク内では効果が積み重ならず (開始時の画像を基準に置き換え)、選択範囲があればその内側のみに作用します。</p>
+
+          <div class="ctrl" data-show="select-rect,lasso,polygon,wand,mask-pen">
+            <div class="ctrl__label">選択合成モード <span class="ctrl__sub">Shift=追加 / Alt=除外</span></div>
+            <div class="seg" role="group" aria-label="選択合成モード">
+              <button class="seg__btn is-active" data-selmode="new" title="新規選択 — 既存をクリア">新規</button>
+              <button class="seg__btn" data-selmode="add" title="範囲追加 (Union / Shift)">＋追加</button>
+              <button class="seg__btn" data-selmode="sub" title="範囲除外 (Difference / Alt)">−除外</button>
+            </div>
+          </div>
+
+          <div class="ctrl sel-actions" data-show="select-rect,lasso,polygon,wand,mask-pen">
+            <button class="btn btn--ghost" id="btn-fill-selection" title="選択範囲を描画色で塗りつぶす (Alt+Delete)"><i data-icon="bucket"></i>塗りつぶし</button>
+            <button class="btn btn--ghost" id="btn-deselect" title="選択を解除 (Ctrl+D)"><i data-icon="x"></i>解除</button>
+          </div>
+
+          <div class="ctrl">
+            <button class="btn btn--ghost btn--block" id="btn-select-all" title="キャンバス全体を選択 (Ctrl+A)">すべて選択</button>
+          </div>
+
+          <div class="empty-note" data-show="eyedropper,pan">このツールには追加設定がありません</div>
+        </section>
+
+        <!-- ========== Tab 2: Inpainting 前処理フィルター ========== -->
+        <section class="panel" id="panel-filter" role="tabpanel">
+          <header class="panel__head panel__head--fx">
+            <h2>前処理フィルター</h2>
+            <span class="panel__hint panel__hint--fx">背景に適用</span>
+          </header>
+          <p class="fx-desc">元画像への前処理。合成画像に反映され、マスクには影響しません。<b>選択範囲がある場合はその範囲のみ適用されます。</b>「確定」で背景レイヤーに焼き込み(ベイク)、設定をリセットします。</p>
+
+          <div class="fx" data-fx="blur">
+            <div class="fx__row">
+              <span class="fx__name">ガウスぼかし</span>
+              <label class="switch"><input type="checkbox" data-fx-on="blur" /><span class="switch__track"></span></label>
+            </div>
+            <input type="range" data-fx-range="blur" min="0" max="10" step="0.5" value="0" />
+            <span class="fx__val mono" data-fx-val="blur">0.0 px</span>
+          </div>
+
+          <div class="fx" data-fx="noise">
+            <div class="fx__row">
+              <span class="fx__name">ノイズ</span>
+              <label class="switch"><input type="checkbox" data-fx-on="noise" /><span class="switch__track"></span></label>
+            </div>
+            <div class="seg seg--fx" role="group" aria-label="ノイズの種類">
+              <button class="seg__btn is-active" data-fx-noise-mode="color" title="カラーノイズ — RGB に独立したランダム値 (カラーグレイン)">カラー</button>
+              <button class="seg__btn" data-fx-noise-mode="gray" title="グレースケールノイズ — 明るさのみのランダム値 (フィルムグレイン)">グレー</button>
+            </div>
+            <input type="range" data-fx-range="noise" min="0" max="100" step="1" value="0" />
+            <span class="fx__val mono" data-fx-val="noise">0 %</span>
+          </div>
+
+          <div class="fx" data-fx="brightness">
+            <div class="fx__row">
+              <span class="fx__name">明るさ</span>
+              <label class="switch"><input type="checkbox" data-fx-on="brightness" /><span class="switch__track"></span></label>
+            </div>
+            <input type="range" data-fx-range="brightness" min="50" max="150" step="1" value="100" />
+            <span class="fx__val mono" data-fx-val="brightness">100 %</span>
+          </div>
+
+          <div class="fx" data-fx="contrast">
+            <div class="fx__row">
+              <span class="fx__name">コントラスト</span>
+              <label class="switch"><input type="checkbox" data-fx-on="contrast" /><span class="switch__track"></span></label>
+            </div>
+            <input type="range" data-fx-range="contrast" min="50" max="150" step="1" value="100" />
+            <span class="fx__val mono" data-fx-val="contrast">100 %</span>
+          </div>
+
+          <div class="fx" data-fx="saturate">
+            <div class="fx__row">
+              <span class="fx__name">彩度</span>
+              <label class="switch"><input type="checkbox" data-fx-on="saturate" /><span class="switch__track"></span></label>
+            </div>
+            <input type="range" data-fx-range="saturate" min="0" max="200" step="1" value="100" />
+            <span class="fx__val mono" data-fx-val="saturate">100 %</span>
+          </div>
+
+          <div class="fx" data-fx="hue">
+            <div class="fx__row">
+              <span class="fx__name">色相回転</span>
+              <label class="switch"><input type="checkbox" data-fx-on="hue" /><span class="switch__track"></span></label>
+            </div>
+            <input type="range" data-fx-range="hue" min="-180" max="180" step="1" value="0" />
+            <span class="fx__val mono" data-fx-val="hue">0°</span>
+          </div>
+
+          <div class="fx-actions">
+            <button class="btn btn--fx" id="btn-filter-apply" title="現在のフィルターを背景レイヤーに焼き込みます(選択範囲があればその範囲のみ)"><i data-icon="check"></i>確定</button>
+            <button class="btn btn--ghost" id="btn-filter-reset" title="フィルター設定をすべて元に戻します"><i data-icon="x"></i>リセット</button>
+          </div>
+        </section>
+
+        <!-- ========== Tab 3: レイヤー管理 ========== -->
+        <section class="panel" id="panel-layers" role="tabpanel">
+          <header class="panel__head">
+            <h2>レイヤー</h2>
+            <span class="panel__hint mono"><span id="layer-count">2</span> 枚 · 編集対象 <span id="layer-target-count">1</span></span>
+          </header>
+          <ul class="layer-list" id="layer-list"></ul>
+          <div class="layer-actions">
+            <button class="iconbtn iconbtn--wide" id="btn-layer-add" title="新規レイヤー"><i data-icon="plus"></i></button>
+            <button class="iconbtn iconbtn--wide" id="btn-layer-dup" title="レイヤーを複製"><i data-icon="copy"></i></button>
+            <button class="iconbtn iconbtn--wide" id="btn-layer-del" title="レイヤーを削除"><i data-icon="trash-2"></i></button>
+          </div>
+          <p class="fx-desc">クリック = アクティブ切替 · Ctrl+クリック = 編集対象に追加 / 解除。描画・レタッチ系ツールは編集対象レイヤーすべてに適用されます。Esc で選択範囲をクリア。</p>
+          <p class="fx-desc">マスクは「描画要素 ＋ 最終選択範囲」の合成で出力されます。</p>
+        </section>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ======================= StatusBar ======================= -->
+  <footer class="statusbar">
+    <div class="statusbar__group">
+      <span class="st-chip" id="st-tool"><i data-icon="brush"></i><b>ブラシ</b></span>
+      <span class="st-pos mono" id="st-pos">X: —&nbsp;&nbsp;Y: —</span>
+      <span class="st-guide" id="st-guide">ドラッグで描画 · [ ] でブラシサイズ</span>
+    </div>
+    <div class="statusbar__group">
+      <span class="mono st-zoom" id="st-zoom">100%</span>
+      <span class="vdiv"></span>
+      <span class="mono st-ver">JSPaint v0.1.0-mock · TypeScript</span>
+    </div>
+  </footer>
+
+  <!-- ======================= Export Modal ======================= -->
+  <div class="modal" id="modal-export" hidden>
+    <div class="modal__backdrop" id="modal-backdrop"></div>
+    <div class="modal__card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <header class="modal__head">
+        <div>
+          <h2 id="modal-title">Inpainting エクスポート</h2>
+          <p class="modal__sub">合成画像とマスクを親アプリへ連携します</p>
+        </div>
+        <button class="iconbtn" id="modal-close" title="閉じる (Esc)"><i data-icon="x"></i></button>
+      </header>
+      <div class="modal__body">
+        <figure class="export-card">
+          <figcaption><span class="tag tag--blue">Composite</span>合成画像 <span class="mono export-file">composite.png</span></figcaption>
+          <div class="export-view"><img id="exp-composite" alt="合成画像プレビュー" /></div>
+          <button class="btn btn--ghost btn--sm" data-dl="composite"><i data-icon="download"></i>PNG保存</button>
+        </figure>
+        <figure class="export-card">
+          <figcaption><span class="tag tag--white">Mask</span>Inpaintingマスク <span class="mono export-file">mask.png</span></figcaption>
+          <div class="export-view export-view--mask"><img id="exp-mask" alt="マスク画像プレビュー" /></div>
+          <button class="btn btn--ghost btn--sm" data-dl="mask"><i data-icon="download"></i>PNG保存</button>
+        </figure>
+      </div>
+      <div class="export-info mono" id="export-info">$ JSPAINT_EXPORT — 待機中…</div>
+      <footer class="modal__foot">
+        <button class="btn btn--ghost" id="modal-cancel">キャンセル</button>
+        <button class="btn btn--primary" id="btn-postmessage"><i data-icon="send"></i>親アプリへ送信 (postMessage)</button>
+      </footer>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <script type="module" src="/src/main.ts"></script>
+</div>
+</body>
+</html>

@@ -1,0 +1,14 @@
+# 依存関係
+node_modules/
+
+# ビルド成果物
+dist/
+
+# ログ / 一時ファイル
+*.log
+*.tmp
+
+# OS / エディタ
+.DS_Store
+Thumbs.db
+desktop.ini
