@@ -25,6 +25,12 @@ export class DocumentStore {
   activeLayerId = 1;
   /** 編集対象レイヤー (描画 / レタッチ系ツールが作用する対象)。常に activeLayerId を含む */
   editTargetIds = new Set<number>();
+  /**
+   * Inpainting マスクに指定されたレイヤー ID (最大 1 枚 / null = 未指定)。
+   * 指定時はエクスポートのマスクをこのレイヤーのみから生成する (ui/exportModal.ts)。
+   * 親アプリ (Forge 拡張) からのマスク受信時にもこの指定が使われる (ui/hostBridge.ts)。
+   */
+  inpaintMaskLayerId: number | null = null;
 
   /** ドキュメントの実寸 (可変 — 画像読み込み時に変わる) */
   width = DOC_W;
@@ -43,6 +49,29 @@ export class DocumentStore {
   /** 描画 (マスク生成対象) レイヤー一覧 */
   paintLayers(): Layer[] {
     return this.layers.filter((l) => l.kind === "paint");
+  }
+
+  /** Inpainting マスクに指定されているレイヤー (未指定 / 削除済みの場合は null) */
+  get inpaintMaskLayer(): Layer | null {
+    return this.layers.find((l) => l.id === this.inpaintMaskLayerId) ?? null;
+  }
+
+  /** レイヤーが Inpainting マスクに指定されているか */
+  isInpaintMaskLayer(layer: Layer): boolean {
+    return this.inpaintMaskLayerId === layer.id;
+  }
+
+  /**
+   * レイヤーを Inpainting マスクに指定する (同時に 1 枚のみ / null で解除)。
+   * 指定時はエクスポートのマスクをこのレイヤーのみから生成する。
+   */
+  setInpaintMaskLayer(layer: Layer | null): void {
+    const next = layer && this.layers.includes(layer) ? layer.id : null;
+    if (this.inpaintMaskLayerId === next) return;
+    this.inpaintMaskLayerId = next;
+    hooks.renderLayers();
+    const l = this.layers.find((x) => x.id === next);
+    hooks.toast(l ? `「${l.name}」を Inpainting マスクに指定しました` : "Inpainting マスクの指定を解除しました", "ok");
   }
 
   /**
@@ -77,6 +106,8 @@ export class DocumentStore {
     this.layers = [base];
     this.activeLayerId = base.id;
     this.editTargetIds = new Set([base.id]);
+    // ドキュメント差し替え時はマスク指定もリセット (レイヤーが作り直されるため)
+    this.inpaintMaskLayerId = null;
     this.saveInitialState();
   }
 
@@ -111,6 +142,8 @@ export class DocumentStore {
     });
     this.activeLayerId = this.layers[0].id;
     this.editTargetIds = new Set([this.activeLayerId]);
+    // レイヤー ID が振り直されるためマスク指定は解除になる
+    this.inpaintMaskLayerId = null;
   }
 
   /** 全ペイントレイヤーをクリア (キャンセル処理) */
@@ -118,14 +151,18 @@ export class DocumentStore {
     for (const l of this.paintLayers()) l.ctx.clearRect(0, 0, this.width, this.height);
   }
 
-  /** 全レイヤー (可視のみ) を合成する */
+  /** 全レイヤー (可視のみ) を合成する。
+   *  Inpainting マスクに指定したレイヤーは出力画像に含めない
+   *  (エクスポート時は maskImage として別送出されるため、画像に焼き込まない)。 */
   compositeCanvas(): HTMLCanvasElement {
     const c = document.createElement("canvas");
     c.width = this.width;
     c.height = this.height;
     const g = c.getContext("2d")!;
     for (const l of this.layers) {
-      if (l.visible) g.drawImage(l.canvas, 0, 0);
+      if (!l.visible) continue;
+      if (l.id === this.inpaintMaskLayerId) continue;
+      g.drawImage(l.canvas, 0, 0);
     }
     return c;
   }
@@ -163,16 +200,19 @@ export class DocumentStore {
    * 画像を新規レイヤーとして追加する (クリップボードからの貼り付けなど)。
    * レイヤーキャンバスはドキュメント実寸。画像は中央に配置される
    * (ドキュメントより大きい画像はドキュメント範囲でクリップされる)。
-   * 追加したレイヤーがアクティブ + 編集対象になる。
+   * 既定では追加したレイヤーがアクティブ + 編集対象になる (options.active = false で抑制)。
    */
-  addImageLayer(image: HTMLCanvasElement, name?: string): Layer {
+  addImageLayer(image: HTMLCanvasElement, name?: string, options?: { active?: boolean }): Layer {
+    const makeActive = options?.active ?? true;
     const l = this.makeLayer(name ?? `Layer ${this.nextPaintLayerNumber()}`, "paint");
     const dx = Math.round((this.width - image.width) / 2);
     const dy = Math.round((this.height - image.height) / 2);
     l.ctx.drawImage(image, dx, dy);
     this.layers.push(l);
-    this.activeLayerId = l.id;
-    this.editTargetIds = new Set([l.id]);
+    if (makeActive) {
+      this.activeLayerId = l.id;
+      this.editTargetIds = new Set([l.id]);
+    }
     hooks.renderLayers();
     hooks.render();
     return l;
@@ -188,6 +228,8 @@ export class DocumentStore {
     this.layers = this.layers.filter((x) => x.id !== l.id);
     this.activeLayerId = this.layers[this.layers.length - 1].id;
     this.editTargetIds = new Set([this.activeLayerId]);
+    // 削除されたレイヤーが Inpainting マスク指定中なら解除
+    if (this.inpaintMaskLayerId === l.id) this.inpaintMaskLayerId = null;
     hooks.renderLayers();
     hooks.render();
     hooks.toast(`レイヤー「${l.name}」を削除`, "ok");

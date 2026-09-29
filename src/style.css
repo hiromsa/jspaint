@@ -517,6 +517,21 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 .layer__badge--lock { color: var(--text-3); background: var(--panel-3); border-color: var(--border-2); }
 .layer__badge--fx { color: #c084fc; background: var(--fx-soft); border-color: rgba(147, 51, 234, 0.4); }
 .layer__badge--target { color: #7dd3fc; background: rgba(56, 189, 248, 0.1); border-color: rgba(56, 189, 248, 0.4); }
+/* Inpainting マスクレイヤー (エクスポート時にマスクとして送信) */
+.layer__badge--mask { color: #4ade80; background: rgba(74, 222, 128, 0.1); border-color: rgba(74, 222, 128, 0.4); }
+/* マスク指定トグル (ロックボタンと同形状) */
+.layer__mask {
+  width: 26px; height: 26px; flex: none;
+  display: grid; place-items: center;
+  border: none; border-radius: 6px;
+  background: transparent; color: var(--text-3);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.layer__mask svg { width: 13px; height: 13px; }
+.layer__mask:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+.layer.is-mask .layer__mask { color: #4ade80; }
+.layer.is-mask { border-color: rgba(74, 222, 128, 0.4); }
 .layer__eye {
   width: 26px; height: 26px; flex: none;
   display: grid; place-items: center;

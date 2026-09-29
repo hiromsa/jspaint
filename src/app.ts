@@ -34,6 +34,7 @@ import { bindLayers, renderLayers } from "./ui/layersPanel";
 import { bindFilters, syncFilterUI } from "./ui/filtersPanel";
 import { bindHeaderAndModal } from "./ui/exportModal";
 import { bindImageIO } from "./ui/imageIO";
+import { bindHostBridge } from "./ui/hostBridge";
 import { applyHostModeUI } from "./ui/hostMode";
 import { $ } from "./ui/dom";
 import { markDirty, toast } from "./ui/feedback";
@@ -95,4 +96,6 @@ export function startApp(): void {
   bindLayers();
   bindHeaderAndModal();
   bindImageIO();
+  // ホスト (親フレーム) からの JSPAINT_LOAD を受信する (Forge 拡張との連携)
+  bindHostBridge();
 }

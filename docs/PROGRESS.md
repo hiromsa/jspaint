@@ -28,6 +28,26 @@ TypeScript 実装の原型として、描画/選択/フィルター/エクスポ
 - ホストモード: `?mode=embed|standalone` + iframe 自動判定で standalone 専用 UI (開く/保存) を出し分け
 - 詳細は [ui.md 2.6](./specification/ui.md#26-画像入出力とホストモード-standalone--embed) / [architecture.md](./specification/architecture.md)
 
+### 親アプリ連携 (Forge 拡張)
+- **読み込みプロトコル `JSPAINT_LOAD`** (`ui/hostBridge.ts`): embed 時に親から
+  `postMessage({ type: "JSPAINT_LOAD", image, mask?, name? })` を受信。
+  `image` (dataURL) でドキュメントを差し替え、`mask` (黒=描画なし / 白=描画あり) は
+  白の輝度を不透明度に変換した「Inpaintマスク」レイヤーとして追加し、
+  **Inpainting マスクレイヤーに指定**する (カレントは元画像のまま)
+- **Inpainting マスクレイヤー指定**: レイヤーパネルの杖ボタンでレイヤーを 1 枚だけ
+  マスクに指定できる (指定レイヤーは緑の「マスク」バッジ + 行強調)。
+  ドキュメント差し替え / キャンセル (初期化) / レイヤー削除時は指定が解除される
+- **エクスポートのマスク生成**: マスク指定レイヤーがある場合は**そのレイヤーのみ**から
+  生成 (不透明ピクセル = 白。選択範囲は含めない)。未指定時は従来どおり
+  全ペイントレイヤー (可視) + 最終選択範囲
+- **compositeImage からマスクレイヤーを除外**: マスクは maskImage として別送出されるため、
+  出力画像 (エクスポート / 保存 / コピー) には焼き込まない
+  (キャンバス表示・バケツ塗り・スポイトの基準合成には影響なし)
+- **送信後の自動復帰**: embed 時に「親アプリへ送信」成功後、送信済み表示を一瞬見せて
+  Export モーダルを自動で閉じて描画画面へ戻る
+- E2E: `npm run test:hostbridge` (親ページ + iframe embed で JSPAINT_LOAD → レイヤー指定 →
+  JSPAINT_EXPORT 往復をピクセル検証、12 ケース合格)
+
 ### ツール
 - ブラシ / 消しゴム (サイズ・不透明度)、直線 / 矩形 / 円 (Shift拘束・塗りつぶし切替)
 - 塗りつぶし (スキャンライン flood fill・許容度)
@@ -93,6 +113,7 @@ TypeScript 実装の原型として、描画/選択/フィルター/エクスポ
 | 17 | **ツール設定パネルの表示切替 (data-show) が効かない不具合を修正** — `is-hidden` クラスの CSS が `.ctrl.is-hidden` / `.empty-note.is-hidden` のクラス限定セレクタのみで、`fx-desc` (ツール別の説明文) など `class="ctrl"` を持たない `data-show` 要素は `is-hidden` が付与されても非表示にならず、**塗りつぶし等を選択中でも他ツール用の説明文が常に表示される**既存不具合があった (フィルターペンの「フィルター効果」セクション追加時に発覚)。CSS を汎用の `.is-hidden { display: none }` に一本化して修正。E2E も classList 確認から `getComputedStyle` による実際の非表示 (display: none) 確認に強化し、fx-desc の非表示検証を追加 (`npm run test:filterpen` 12 合格) |
 | 18 | **表示切替の上書き不具合 (確定/取消等が全ツールで表示される) と起動直後の選択不具合を修正** — ① 17 の汎用化だけでは `.btn { display: inline-flex }` 等 (style.css の後続行・同詳細度) が CSS カスケードで上書き勝ちし、パペットワープの「確定/取消」・選択系の「塗りつぶし/解除」ボタンが**全ツール選択中で表示される**状態だったため `.is-hidden { display: none !important }` に修正。② 起動時の `doc.init()` が `selection.resizeTo()` を呼んでおらず選択マスクが 1×1px のままになり、**起動直後 (デモ画像) で選択すると Marching Ants の点線が表示されず・範囲限定も効かない**不具合を修正 (`startApp` で `selection.resizeTo(doc.width, doc.height)` を呼び出し。「開く/ドロップ」経路では applyBaseImage が呼ぶため既存 E2E では未検出だった)。E2E (`npm run test:filterpen` 18 ケース) に「矩形選択で Marching Ants (点線) が表示される」「brush/bucket/filter-pen/select-rect/puppet-warp の各選択時に無関係なボタン (確定/取消/塗りつぶし/解除) が表示されない」検証を追加 |
 | 19 | **フィルターのスライダー操作でスイッチを自動 ON** — 「スライダーをいじってからスイッチを ON にする手間」の解消。`filtersPanel.ts` の共通実装 (`bindFxScope`) で、スライダー (`input[data-fx-range]`) の操作を有効化の意思表示として扱い `settings.on[key] = true` に自動設定する (ノイズの種類カラー/グレーボタンも `on.noise = true` で自動 ON)。共通実装のため**ツールタブ (フィルター効果) / フィルタータブ両方**に一度で反映。E2E に「ペン用 / フィルタータブのスライダー操作でスイッチが自動 ON」「ノイズの種類ボタンでも自動 ON」検証を追加 (`npm run test:filterpen` 21 合格) |
+| 20 | **親アプリ (Forge 拡張) 連携の本実装: `JSPAINT_LOAD` 受信 + Inpainting マスクレイヤー指定** — ① `ui/hostBridge.ts` を新設し、embed 時に親から `postMessage({ type: "JSPAINT_LOAD", image, mask?, name? })` を受けてドキュメントを差し替える (README の連携仕様に準拠)。② `mask` (黒=描画なし / 白=描画あり) は白の輝度を不透明度に変換した「Inpaintマスク」レイヤーとして追加し、新設の **Inpainting マスクレイヤー指定** (`documentStore.inpaintMaskLayerId`・最大 1 枚 / レイヤーパネルの杖ボタンで付け替え・緑バッジ表示・`is-mask` 行強調) に自動設定。③ エクスポートのマスク生成 (`exportModal.buildMaskUrl`) は指定レイヤーがある場合 **そのレイヤーのみ**から (選択範囲は含めない) とし、未指定時は従来どおり全ペイントレイヤー + 選択範囲。④ **compositeImage からマスクレイヤーを除外** (`compositeCanvas` — 出力画像にマスクを焼き込まず、マスクは maskImage として別送出。canvas 表示 / バケツ塗り / スポイトの基準には影響なし)。⑤ embed で「親アプリへ送信」成功後、送信済み表示を一瞬見せて Export モーダルを自動で閉じ、描画画面へ戻る (Forge 側の iframe 再利用時に Export 画面が残らない)。⑥ ホストからのマスクレイヤーは `addImageLayer` の新オプション `{ active: false }` で**カレントにしない** (元画像を `selectLayer` でカレントにし、開いた直後から画像を編集できる)。検証: 新規 `npm run test:hostbridge` (親ページ + iframe embed の postMessage 往復 E2E、12 ケース合格 — ドキュメント差し替え / マスクレイヤー追加・自動指定 / カレントは元画像 / ボタントグル / JSPAINT_EXPORT 往復 / compositeImage へのマスク非混入 / maskImage ピクセル検証) + `npm run test:imageio` 27 合格 + typecheck + build。docs 更新 (README 親アプリ連携セクション) |
 
 ## 次回候補 (Backlog)
 
@@ -100,7 +121,6 @@ TypeScript 実装の原型として、描画/選択/フィルター/エクスポ
 - レイヤー順序入替・ブレンドモード・不透明度
 - Marching Ants を輪郭トレース (閉ループパス化) に置換 (現状は境界ピクセル近似)
 - マスクの羽化 (feather) / ブラシのエッジ軟化
-- 親アプリ連携の本実装 (Forge 拡張スクリプト / iframe 読み込みプロトコル):
-  - embed 時の画像受信プロトコル `postMessage({ type: 'JSPAINT_LOAD', image: dataURL })` の受信対応
-  - 完了時に自動で postMessage 送信 → 親アプリが iframe を閉じるフロー
+- Inpainting マスクレイヤーの複数指定 (現在は 1 枚のみ)
+- 親アプリ連携の拡張: 完了時のドキュメントリセット方針 / 複数レイヤーの受け渡しプロトコル
 - 読み込み画像の拡大/縮小・リサイズ UI (現在は実寸のまま読み込む)

@@ -13,6 +13,7 @@ npm run build        # dist/index.html — 単一HTML (依存なし・file:// �
 npm run typecheck    # tsc --noEmit
 npm run test:puppet  # パペットワープ pure ロジックの単体検証 (node)
 npm run test:imageio # 画像入出力 & ホストモードの E2E 検証 (ヘッドレス Chrome/Edge, 要 build 済み)
+npm run test:hostbridge # ホスト連携 (JSPAINT_LOAD / JSPAINT_EXPORT) の E2E 検証 (ヘッドレス Chrome/Edge, 要 build 済み)
 ```
 
 ビルド成果物は `dist/index.html` の **1ファイルのみ**。`vite-plugin-singlefile` により JS/CSS がすべてインライン化されるため、
@@ -68,6 +69,34 @@ npm run test:imageio # 画像入出力 & ホストモードの E2E 検証 (ヘ�
 |---|---|---|
 | standalone | `?mode=standalone` / iframe 外 (既定) | 全機能 (開く・保存・コピー) を表示 |
 | embed | `?mode=embed` / iframe 内自動判定 | 「開く」「保存」を非表示。画像は親アプリから受け取る前提 |
+
+### 読み込み (親アプリ → 本ツール)
+
+embed 時は親アプリからの次のメッセージを受け付けます (`ui/hostBridge.ts`):
+
+```ts
+window.addEventListener("message", (e) => {
+  // e.data:
+  {
+    type: "JSPAINT_LOAD",
+    image: dataURL, // 元画像 (ドキュメント差し替え) — 必須
+    mask?: dataURL, // Inpaintingマスク (黒=描画なし / 白=描画あり) — 任意。
+                    // 白の輝度を不透明度に変換し、「Inpaintマスク」レイヤーとして追加 +
+                    // Inpainting マスクレイヤーに指定 (ui/layersPanel.ts のボタンで変更可)
+    name?: string,  // ドキュメント名
+  }
+});
+```
+
+### Inpainting マスクレイヤー指定
+
+レイヤーパネルの各レイヤーにマスク指定ボタン (杖アイコン) があり、**1 枚のみ**
+Inpainting マスクレイヤーとして指定できる。指定レイヤーには「マスク」バッジが付く。
+
+| マスク指定 | エクスポート時のマスク生成 |
+|---|---|
+| 指定あり | **そのレイヤーのみ**から生成 (不透明ピクセル = 白。選択範囲は含めない) |
+| 指定なし | 従来どおり: 全ペイントレイヤー (可視) + 最終選択範囲 |
 
 ### エクスポート
 

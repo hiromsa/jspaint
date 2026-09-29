@@ -26,22 +26,33 @@ function buildMaskUrl(): string {
   g.fillStyle = "#000000";
   g.fillRect(0, 0, w, h);
 
-  // ペイントレイヤーを白で加算
-  const tmp = document.createElement("canvas");
-  tmp.width = w;
-  tmp.height = h;
-  const tg = tmp.getContext("2d")!;
-  for (const l of doc.layers) {
-    if (l.kind !== "paint" || !l.visible) continue;
+  // レイヤー canvas を「白の不透明度」に変換してマスクへ加算
+  const addWhitened = (canvas: HTMLCanvasElement) => {
+    const tmp = document.createElement("canvas");
+    tmp.width = w;
+    tmp.height = h;
+    const tg = tmp.getContext("2d")!;
     tg.globalCompositeOperation = "source-over";
-    tg.clearRect(0, 0, w, h);
-    tg.drawImage(l.canvas, 0, 0);
+    tg.drawImage(canvas, 0, 0);
     tg.globalCompositeOperation = "source-in";
     tg.fillStyle = "#ffffff";
     tg.fillRect(0, 0, w, h);
     g.drawImage(tmp, 0, 0);
+  };
+
+  // Inpainting マスクレイヤーが指定されている場合はそのレイヤーのみから生成する
+  // (選択範囲は含めない — 指定レイヤーがマスクの唯一のソース)
+  const maskLayer = doc.inpaintMaskLayer;
+  if (maskLayer) {
+    if (maskLayer.visible) addWhitened(maskLayer.canvas);
+    return c.toDataURL("image/png");
   }
-  // 最終選択範囲を白で加算
+
+  // 未指定時は従来どおり: 全ペイントレイヤーを白で加算 + 最終選択範囲を白で加算
+  for (const l of doc.layers) {
+    if (l.kind !== "paint" || !l.visible) continue;
+    addWhitened(l.canvas);
+  }
   if (selection.hasSelection) g.drawImage(selection.mask, 0, 0);
   return c.toDataURL("image/png");
 }
@@ -54,7 +65,9 @@ export function openExport(): void {
   $("#exp-mask").setAttribute("src", exportMaskUrl);
   const info = $("#export-info");
   info.classList.remove("is-sent", "is-error");
-  info.textContent = `$ JSPAINT_EXPORT · ${doc.width}×${doc.height} · mask = 描画要素 + 最終選択範囲 → 待機中…`;
+  const maskLayer = doc.inpaintMaskLayer;
+  const maskInfo = maskLayer ? `Inpainting マスクレイヤー「${maskLayer.name}」` : "描画要素 + 最終選択範囲";
+  info.textContent = `$ JSPAINT_EXPORT · ${doc.width}×${doc.height} · mask = ${maskInfo} → 待機中…`;
   ($("#modal-export") as HTMLElement).hidden = false;
 }
 
@@ -78,6 +91,10 @@ function postToParent(): void {
     info.textContent = '→ window.parent.postMessage({ type: "JSPAINT_EXPORT", compositeImage, maskImage }) 送信済み ✓';
     info.classList.add("is-sent");
     toast("親アプリへ送信しました", "ok");
+    // 送信済み表示を一瞬見せてから描画画面へ戻る (次回オープン時にエクスポート画面が残らないように)
+    setTimeout(() => {
+      if (!($("#modal-export") as HTMLElement).hidden) closeExport();
+    }, 600);
   } else {
     info.textContent = `⚠ standalone モード (iframe未検出 / mode=${hostMode}) — 各PNG保存ボタンでダウンロードしてください`;
     info.classList.add("is-error");
