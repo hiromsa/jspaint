@@ -135,6 +135,14 @@ async function main(): Promise<void> {
     const penOnOutside = await viewPixel(page, OFF_PATH[0], OFF_PATH[1]);
     ok("ペン用フィルターを有効にしてもキャンバス全体は変化しない", colorDiff(beforeOutside, penOnOutside) < 6);
 
+    // スライダー操作は有効化の意思表示としてスイッチを自動 ON にする (ペン用)
+    await page.evaluate(() => {
+      const range = document.querySelector('[data-fx-scope="pen"] input[data-fx-range="contrast"]') as HTMLInputElement;
+      range.value = "130";
+      range.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    ok("ペン用: スライダーをドラッグするとスイッチが自動で ON になる", await isFxOn(page, "pen", "contrast"));
+
     /* --- 2) なぞった範囲だけ焼き込まれる --- */
     await page.mouse.move(cx, cy);
     await page.mouse.down();
@@ -159,8 +167,24 @@ async function main(): Promise<void> {
     const previewOff = await viewPixel(page, OFF_PATH[0], OFF_PATH[1]);
     ok("フィルタータブを OFF にするとプレビューは元に戻る (非破壊)", colorDiff(afterOutside, previewOff) < 6);
 
+    // スライダー操作でスイッチが自動 ON になる (フィルタータブ)
+    await page.evaluate(() => {
+      const range = document.querySelector('[data-fx-scope="image"] input[data-fx-range="contrast"]') as HTMLInputElement;
+      range.value = "130";
+      range.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    ok("フィルタータブ: スライダーをドラッグするとスイッチが自動で ON になる", await isFxOn(page, "image", "contrast"));
+    await setFx(page, "image", "contrast", false);
+    // ノイズの種類 (カラー / グレー) ボタンもノイズ有効の意思表示としてスイッチを自動 ON にする
+    await page.evaluate(() => {
+      (document.querySelector('[data-fx-scope="image"] button[data-fx-noise-mode="gray"]') as HTMLButtonElement).click();
+    });
+    ok("フィルタータブ: ノイズの種類ボタンでもスイッチが自動で ON になる", await isFxOn(page, "image", "noise"));
+    await setFx(page, "image", "noise", false);
+
     /* --- 4) フィルター効果が無効なときのストロークは案内表示になる --- */
     await setFx(page, "pen", "brightness", false);
+    await setFx(page, "pen", "contrast", false);
     await page.mouse.move(cx, cy);
     await page.mouse.down();
     await page.mouse.move(cx + 60, cy, { steps: 8 });

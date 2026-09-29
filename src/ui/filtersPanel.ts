@@ -69,15 +69,18 @@ function bindFxScope(scope: HTMLElement, settings: FilterSettings, onChange?: (k
   scope.querySelectorAll<HTMLInputElement>("input[data-fx-range]").forEach((el) =>
     el.addEventListener("input", () => {
       const key = (el as HTMLElement).dataset.fxRange!;
+      // スライダー操作 = そのフィルターを有効にしたい意思表示として、スイッチを自動で ON にする
+      settings.on[key] = true;
       (settings as unknown as Record<string, number>)[key] = Number(el.value);
       syncFxScope(scope, settings);
       onChange?.(key);
     }),
   );
-  // ノイズの種類 (カラー / グレー)
+  // ノイズの種類 (カラー / グレー)。ノイズ設定の操作もノイズ有効の意思表示として ON にする
   scope.querySelectorAll<HTMLButtonElement>("button[data-fx-noise-mode]").forEach((btn) =>
     btn.addEventListener("click", () => {
       settings.noiseMode = (btn as HTMLElement).dataset.fxNoiseMode as "color" | "gray";
+      settings.on.noise = true;
       syncFxScope(scope, settings);
       onChange?.("noise");
     }),
