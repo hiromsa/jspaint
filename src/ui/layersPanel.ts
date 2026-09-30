@@ -6,8 +6,12 @@ import { mountIcons } from "../assets/icons";
 import { doc } from "../core/documentStore";
 import { filters } from "../core/filterEngine";
 import type { Layer } from "../core/types";
+import { drawMaskLayerThumb } from "../rendering/maskDisplay";
 import { render } from "../rendering/renderer";
 import { $ } from "./dom";
+
+/** サムネイルの辺長 (canvas px。CSS で 34px 表示に縮小される) */
+const THUMB_SIZE = 68;
 
 function layerBadgeHTML(l: Layer): string {
   let html = "";
@@ -42,7 +46,9 @@ export function renderLayers(): void {
       <button class="layer__mask" title="${isMask ? "Inpainting マスクの指定を解除" : "Inpainting マスクレイヤーに指定 (エクスポート時にこのレイヤーがマスクになる / 1 枚のみ指定可)"}"><i data-icon="${isMask ? "check" : "wand"}"></i></button>
       <button class="layer__lock" title="${l.locked ? "ロック解除" : "ロック (描画・フィルターの対象外にする)"}"><i data-icon="${l.locked ? "lock" : "lock-open"}"></i></button>
       <button class="layer__eye" title="表示 / 非表示"><i data-icon="${l.visible ? "eye" : "eye-off"}"></i></button>`;
-    (li.querySelector(".layer__thumb") as HTMLElement).appendChild(cloneThumb(l.canvas));
+    // Inpainting マスクレイヤーはキャンバス表示に合わせてドット網掛のサムネイルにする
+    const thumb = isMask ? drawMaskLayerThumb(l.canvas, THUMB_SIZE) : cloneThumb(l.canvas);
+    (li.querySelector(".layer__thumb") as HTMLElement).appendChild(thumb);
     li.addEventListener("click", (e) => doc.selectLayer(l, e.ctrlKey || e.metaKey || e.shiftKey));
     (li.querySelector(".layer__mask") as HTMLElement).addEventListener("click", (e) => {
       e.stopPropagation();
@@ -68,11 +74,11 @@ export function renderLayers(): void {
 
 function cloneThumb(src: HTMLCanvasElement): HTMLCanvasElement {
   const c = document.createElement("canvas");
-  c.width = 68;
-  c.height = 68;
+  c.width = THUMB_SIZE;
+  c.height = THUMB_SIZE;
   const g = c.getContext("2d")!;
   g.imageSmoothingQuality = "high";
-  g.drawImage(src, 0, 0, 68, 68);
+  g.drawImage(src, 0, 0, THUMB_SIZE, THUMB_SIZE);
   return c;
 }
 

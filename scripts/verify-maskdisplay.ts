@@ -91,6 +91,47 @@ async function scanCenterRow(frame: Frame): Promise<RowStats> {
   });
 }
 
+/** レイヤー行のサムネイル canvas を走査した統計 */
+interface ThumbStats {
+  /** 不透明画素数 (alpha >= 200) */
+  content: number;
+  /** 白タイルの画素数 (lum >= 200) */
+  white: number;
+  /** 黒タイルの画素数 (lum <= 60) */
+  black: number;
+  /** 右半分 (doc のマスク透明側) の不透明画素数 */
+  rightContent: number;
+  /** 描画色 (#2563eb) がそのまま出ている画素数 */
+  rawBlue: number;
+}
+
+/** 指定レイヤー行 (rowSelector) のサムネイル canvas を走査する */
+async function scanThumb(frame: Frame, rowSelector: string): Promise<ThumbStats> {
+  return frame.evaluate((sel) => {
+    const canvas = document.querySelector(`${sel} .layer__thumb canvas`) as HTMLCanvasElement | null;
+    if (!canvas) return { content: -1, white: -1, black: -1, rightContent: -1, rawBlue: -1 };
+    const g = canvas.getContext("2d")!;
+    const w = canvas.width;
+    const h = canvas.height;
+    const d = g.getImageData(0, 0, w, h).data;
+    let content = 0, white = 0, black = 0, rightContent = 0, rawBlue = 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        if (d[i + 3] < 200) continue;
+        content++;
+        if (x >= w / 2) rightContent++;
+        const r = d[i], gr = d[i + 1], b = d[i + 2];
+        const lum = 0.299 * r + 0.587 * gr + 0.114 * b;
+        if (lum >= 200) white++;
+        else if (lum <= 60) black++;
+        if (Math.abs(r - 0x25) < 30 && Math.abs(gr - 0x63) < 30 && Math.abs(b - 0xeb) < 30) rawBlue++;
+      }
+    }
+    return { content, white, black, rightContent, rawBlue };
+  }, rowSelector);
+}
+
 async function main(): Promise<void> {
   if (!existsSync(distFile)) {
     throw new Error(`dist/index.html がありません: ${distFile} (npm run build を先に実行)`);
@@ -212,6 +253,22 @@ async function main(): Promise<void> {
     ok("マスクの透明部分への描画がドット網掛として現れる", s4.midRight > 40, `right=${s4.midRight}`);
     ok("描画後も網掛は白黒のまま (暗画素はほぼ無い)", s4.dark < 10, `dark=${s4.dark}`);
     ok("描画色 (#2563eb) がそのまま表示されない (すべて網掛合成色)", s4.rawPaintPixels === 0, `raw=${s4.rawPaintPixels}`);
+
+    /* ========== 5) レイヤーサムネイルもドット表示に統一される ========== */
+    console.log("\n[サムネイルのドット表示]");
+    // サムネイルはレイヤー操作時に再生成されるため、行クリック (selectLayer) で最新化してから走査する
+    await frame.evaluate(() => {
+      (document.querySelector("#layer-list li:first-child") as HTMLElement).click();
+    });
+    await new Promise((r) => setTimeout(r, 200));
+
+    const maskThumb = await scanThumb(frame, "#layer-list li:first-child");
+    ok("マスクレイヤーのサムネイルに白タイルと黒タイルがある (ドット化)", maskThumb.white > 0 && maskThumb.black > 0, JSON.stringify(maskThumb));
+    ok("マスクサムネイルに描画色が露出しない", maskThumb.rawBlue === 0, `raw=${maskThumb.rawBlue}`);
+    ok("マスクの透明部分に描いたストロークもサムネイルに反映される", maskThumb.rightContent > 0, `right=${maskThumb.rightContent}`);
+
+    const baseThumb = await scanThumb(frame, "#layer-list li:nth-child(2)");
+    ok("マスク以外のレイヤーのサムネイルはドット化しない", baseThumb.black === 0 && baseThumb.white > 0, JSON.stringify(baseThumb));
 
     /* ========== まとめ ========== */
     console.log(`\n結果: ${passed} 合格 / ${failed} 失敗`);
