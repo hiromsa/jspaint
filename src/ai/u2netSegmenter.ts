@@ -42,13 +42,16 @@ export class U2NetSegmenter {
     g.drawImage(source, 0, 0, size, size);
     const px = g.getImageData(0, 0, size, size).data;
 
-    // NCHW (1,3,320,320) の float32 へ展開 (RGB / 255)
+    // NCHW (1,3,320,320) の float32 へ展開。
+    // 前処理は rembg / U-2-Net 本家と同じ「/255 → ImageNet の mean/std 正規化」
+    const mean = [0.485, 0.456, 0.406];
+    const std = [0.229, 0.224, 0.225];
     const plane = size * size;
     const chw = new Float32Array(3 * plane);
     for (let i = 0; i < plane; i++) {
-      chw[i] = px[i * 4] / 255;
-      chw[plane + i] = px[i * 4 + 1] / 255;
-      chw[plane * 2 + i] = px[i * 4 + 2] / 255;
+      chw[i] = (px[i * 4] / 255 - mean[0]) / std[0];
+      chw[plane + i] = (px[i * 4 + 1] / 255 - mean[1]) / std[1];
+      chw[plane * 2 + i] = (px[i * 4 + 2] / 255 - mean[2]) / std[2];
     }
 
     const inputName = this.session.inputNames[0];

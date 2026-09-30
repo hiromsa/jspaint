@@ -251,6 +251,22 @@ async function runE2E(): Promise<void> {
     ok("ツールタブにAI選択の設定ブロックが表示される", panelVisible);
     ok("初期状態のモデルステータスは「未読み込み」", (await modelStatusText(page)) === "未読み込み", await modelStatusText(page));
 
+    /* --- 1b) モデル未読み込みでクリック → セットアップモーダル (ダウンロード元の案内) --- */
+    await clickDoc(page, 180, 180);
+    ok("モデル未読み込みのクリックでセットアップモーダルが開く", await page.evaluate(() => !(document.querySelector("#modal-ai-model") as HTMLElement).hidden));
+    const sources = await page.evaluate(() => [...document.querySelectorAll("#ai-source-list a.ai-source")].map((a) => (a as HTMLAnchorElement).href));
+    ok(
+      "ダウンロード元リンクが2件表示される (GitHub公式 / HuggingFaceミラー)",
+      sources.length === 2 && sources[0].includes("github.com/danielgatis/rembg/releases/download") && sources[1].includes("huggingface.co/tomjackson2023/rembg"),
+      JSON.stringify(sources),
+    );
+    await page.keyboard.press("Escape");
+    ok("Esc でセットアップモーダルを閉じられる", await page.evaluate(() => (document.querySelector("#modal-ai-model") as HTMLElement).hidden));
+    await page.evaluate(() => (document.querySelector("#btn-ai-model-help") as HTMLButtonElement).click());
+    ok("パネルの「ダウンロード元…」でモーダルを再表示できる", await page.evaluate(() => !(document.querySelector("#modal-ai-model") as HTMLElement).hidden));
+    await page.evaluate(() => (document.querySelector("#modal-ai-model .modal__foot [data-ai-close]") as HTMLElement).click());
+    ok("閉じるボタンでモーダルを閉じられる", await page.evaluate(() => (document.querySelector("#modal-ai-model") as HTMLElement).hidden));
+
     /* --- 2) テスト画像を読み込む --- */
     const fileInput = await page.$("#file-open");
     await fileInput!.uploadFile(svgFile);

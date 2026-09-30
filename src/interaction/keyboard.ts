@@ -13,7 +13,7 @@ import { copySelection, cutSelection } from "../core/clipboard";
 import { fitView, setZoom } from "../core/viewState";
 import { KEY_TOOL, TOOLS } from "../core/toolDefs";
 import { cancelPolygon, closePolygon } from "./pointer";
-import { setTool, syncSlider, swapColors } from "../ui/panels";
+import { setTool, syncSlider, swapColors, closeAiModelSetup } from "../ui/panels";
 import { closeExport, openExport } from "../ui/exportModal";
 import { imageIOActions } from "../ui/imageIO";
 import { hostMode } from "../ui/hostMode";
@@ -53,6 +53,8 @@ function onKeyDown(e: KeyboardEvent): void {
   if (e.key === " ") { e.preventDefault(); state.spacePan = true; $("#stage").style.cursor = "grab"; return; }
   if (e.key === "Escape") {
     if (!($("#modal-export") as HTMLElement).hidden) { closeExport(); return; }
+    // AIモデルセットアップモーダル (ダウンロード元の案内)
+    if (!($("#modal-ai-model") as HTMLElement).hidden) { closeAiModelSetup(); return; }
     // パペットワープセッションの取消 (進行中の変形を破棄)
     if (warpSession.active) { warpSession.cancel(); return; }
     if (interaction.polyDrag || interaction.polyPoints.length > 0) { cancelPolygon(); return; }

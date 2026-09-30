@@ -304,8 +304,9 @@
             <div class="sel-actions">
               <button class="btn btn--ghost" id="btn-ai-model-load" title="u2net.onnx を選択して読み込み (IndexedDB にキャッシュされ、次回から自動で使われます)"><i data-icon="folder-open"></i>読み込む</button>
               <button class="btn btn--ghost" id="btn-ai-model-remove" title="キャッシュしたAIモデルを削除"><i data-icon="trash-2"></i>削除</button>
+              <button class="btn btn--ghost btn--sm" id="btn-ai-model-help" title="モデルのダウンロード元を表示 (u2net.onnx / 約168MB)"><i data-icon="download"></i>ダウンロード元…</button>
             </div>
-            <p class="fx-desc">rembg 等で配布される U-2-Net の u2net.onnx (約168MB / Apache-2.0) を使用します。初回のみ読み込み、以降はキャッシュから起動します。</p>
+            <p class="fx-desc">rembg 等で配布される U-2-Net の u2net.onnx (約168MB / Apache-2.0) を使用します。「ダウンロード元…」から入手し、初回のみ読み込み、以降はキャッシュから起動します。</p>
           </div>
 
           <div class="ctrl" data-show="select-rect,lasso,polygon,wand,mask-pen,ai-select">
@@ -441,7 +442,7 @@
     <div class="statusbar__group">
       <span class="mono st-zoom" id="st-zoom">100%</span>
       <span class="vdiv"></span>
-      <span class="mono st-ver">JSPaint v0.2.16 · TypeScript</span>
+      <span class="mono st-ver">JSPaint v0.2.17 · TypeScript</span>
     </div>
   </footer>
 
@@ -472,6 +473,29 @@
       <footer class="modal__foot">
         <button class="btn btn--ghost" id="modal-cancel">キャンセル</button>
         <button class="btn btn--primary" id="btn-postmessage"><i data-icon="send"></i>親アプリへ送信 (postMessage)</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ======================= AI Model Setup Modal ======================= -->
+  <div class="modal" id="modal-ai-model" hidden>
+    <div class="modal__backdrop" data-ai-close></div>
+    <div class="modal__card" role="dialog" aria-modal="true" aria-labelledby="ai-modal-title">
+      <header class="modal__head">
+        <div>
+          <h2 id="ai-modal-title">AIモデルのセットアップ</h2>
+          <p class="modal__sub">初回のみ u2net.onnx (約168MB) をダウンロードして読み込みます</p>
+        </div>
+        <button class="iconbtn" data-ai-close title="閉じる (Esc)"><i data-icon="x"></i></button>
+      </header>
+      <div class="modal__body">
+        <p class="fx-desc">AI被写体選択には U-2-Net モデル (<b>u2net.onnx</b>) が必要です。下のリンクからダウンロードし、「モデルを読み込む…」で選択してください。読み込んだモデルはブラウザ (IndexedDB) にキャッシュされ、次回からは自動で使われます。</p>
+        <div class="ai-sources" id="ai-source-list"><!-- src/ai/modelSources.ts から生成 --></div>
+        <p class="fx-desc">※ ダウンロードにはインターネット接続が必要です (推論自体はブラウザ内で完結し、画像がどこかに送信されることはありません)。</p>
+      </div>
+      <footer class="modal__foot">
+        <button class="btn btn--ghost" data-ai-close>閉じる</button>
+        <button class="btn btn--primary" id="btn-ai-modal-load"><i data-icon="download"></i>モデルを読み込む…</button>
       </footer>
     </div>
   </div>

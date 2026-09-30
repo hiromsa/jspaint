@@ -4,6 +4,7 @@
  */
 import { mountIcons } from "../assets/icons";
 import { aiSelect } from "../ai/aiSelectController";
+import { AI_MODEL_SOURCES } from "../ai/modelSources";
 import { doc } from "../core/documentStore";
 import { MAX_BRUSH_SIZE, restoreToolSize, setBrushSize, state } from "../core/editorState";
 import { selection } from "../core/selectionStore";
@@ -52,6 +53,35 @@ export function openAiModelPicker(): void {
   const input = $("#file-ai-model") as HTMLInputElement;
   input.value = ""; // 同一ファイルの再選択でも change が発火するよう初期化
   input.click();
+}
+
+/** AIモデルセットアップモーダル (ダウンロード元の案内) を開く */
+export function openAiModelSetup(): void {
+  ($("#modal-ai-model") as HTMLElement).hidden = false;
+}
+
+/** AIモデルセットアップモーダルを閉じる */
+export function closeAiModelSetup(): void {
+  ($("#modal-ai-model") as HTMLElement).hidden = true;
+}
+
+/** AIモデルのダウンロード元リンクを描画する (セットアップモーダル / src/ai/modelSources.ts のデータ) */
+function renderAiSources(container: HTMLElement): void {
+  container.innerHTML = "";
+  for (const source of AI_MODEL_SOURCES) {
+    const a = document.createElement("a");
+    a.className = "ai-source";
+    a.href = source.url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.title = `${source.url} を新しいタブで開く`;
+    a.innerHTML = `<span class="tag ${source.tagClass}"></span><span class="ai-source__body"><b></b><span class="mono ai-source__url"></span><span class="ai-source__note"></span></span>`;
+    (a.querySelector(".tag") as HTMLElement).textContent = source.tag;
+    (a.querySelector("b") as HTMLElement).textContent = source.label;
+    (a.querySelector(".ai-source__url") as HTMLElement).textContent = source.url;
+    (a.querySelector(".ai-source__note") as HTMLElement).textContent = source.note;
+    container.appendChild(a);
+  }
 }
 
 /** AIモデルの状態表示とボタン有効性を同期する (aiSelect.onStatusChange からも呼ばれる) */
@@ -235,7 +265,7 @@ export function bindControls(): void {
   $("#btn-fill-selection").addEventListener("click", fillSelection);
   $("#btn-deselect").addEventListener("click", deselect);
 
-  // AI被写体選択 (しきい値 / モデルの読み込み・削除)
+  // AI被写体選択 (しきい値 / モデルの読み込み・削除 / ダウンロード元案内)
   aiSelect.onStatusChange = syncAiModelStatus;
   syncAiModelStatus();
   const aiThreshold = $("#ctl-ai-threshold") as HTMLInputElement;
@@ -251,6 +281,14 @@ export function bindControls(): void {
     const file = (e.target as HTMLInputElement).files?.[0];
     if (file) void aiSelect.loadModelFile(file);
   });
+  // セットアップモーダル (ダウンロード元の案内)
+  renderAiSources($("#ai-source-list"));
+  $("#btn-ai-model-help").addEventListener("click", openAiModelSetup);
+  $("#btn-ai-modal-load").addEventListener("click", () => {
+    closeAiModelSetup();
+    openAiModelPicker();
+  });
+  $$("[data-ai-close]").forEach((el) => el.addEventListener("click", closeAiModelSetup));
 
   // カラー
   $("#swatch-fg").addEventListener("click", () => ($("#color-input") as HTMLInputElement).click());
