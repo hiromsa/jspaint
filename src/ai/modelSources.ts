@@ -1,12 +1,13 @@
 /**
- * ai/modelSources.ts — AIモデル (u2net.onnx) のダウンロード元情報
+ * ai/modelSources.ts — AIモデル (SlimSAM ONNX ×2) のダウンロード元情報
  *
- * URL は rembg 本体が使用している配布先 (sessions/u2net.py の pooch.retrieve) と、
- * 実在を確認済みの Hugging Face ミラー。UI (セットアップモーダル) とテストの両方から参照する。
+ * いずれも Hugging Face (Xenova/slimsam-77-uniform / Apache-2.0) の実ファイルで、
+ * CORS 許可済み (ACAO: * / Origin echo) を確認済み — ブラウザからの直接ダウンロードも可能。
+ * GitHub 経由の配布は release assets が CORS 非対応のため手動ダウンロード専用。
  */
 
 export interface AiModelSource {
-  /** 種別バッジのテキスト (公式 / ミラー) */
+  /** 種別バッジのテキスト */
   tag: string;
   /** バッジの CSS クラス (tag--blue / tag--white) */
   tagClass: string;
@@ -14,24 +15,24 @@ export interface AiModelSource {
   label: string;
   /** ダウンロードURL */
   url: string;
-  /** 補足 (サイズ / MD5 など) */
+  /** 補足 */
   note: string;
 }
 
-/** U-2-Net モデルのダウンロード元 (公式 → ミラーの順) */
+/** SlimSAM モデルのダウンロード元 (エンコーダ → デコーダの順) */
 export const AI_MODEL_SOURCES: AiModelSource[] = [
   {
-    tag: "公式",
+    tag: "エンコーダ",
     tagClass: "tag--blue",
-    label: "GitHub — rembg リリース",
-    url: "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx",
-    note: "rembg 本体が使用する配布元 (MD5: 60024c5c889badc19c04ad937298a77b)",
+    label: "vision_encoder.onnx (23 MB)",
+    url: "https://huggingface.co/Xenova/slimsam-77-uniform/resolve/main/onnx/vision_encoder.onnx",
+    note: "画像 → 埋め込み。ドキュメント変更時の1回だけ実行",
   },
   {
-    tag: "ミラー",
+    tag: "デコーダ",
     tagClass: "tag--white",
-    label: "Hugging Face — tomjackson2023/rembg",
-    url: "https://huggingface.co/tomjackson2023/rembg/resolve/main/u2net.onnx",
-    note: "u2net.onnx (176 MB) / GitHub が混み合っている場合の代替",
+    label: "prompt_encoder_mask_decoder.onnx (17 MB)",
+    url: "https://huggingface.co/Xenova/slimsam-77-uniform/resolve/main/onnx/prompt_encoder_mask_decoder.onnx",
+    note: "ポイント → マスク。クリックごとに高速に再実行される",
   },
 ];

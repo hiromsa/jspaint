@@ -1,32 +1,41 @@
 # AI被写体選択 (ai-select) 仕様
 
-Affinity Photo の「被写体を選択 (Select Subject)」に相当する、AI による自動範囲選択機能の仕様。
-U-2-Net (Salient Object Detection) をブラウザ内で推論し、クリックした位置を含む「被写体」を
-選択マスクへ変換する。外部サーバ・通信は一切使用しない (完全ローカル推論)。
+Affinity Photo の「オブジェクト選択」に相当する、**プロンプト可能な対話セグメンテーション**機能の仕様。
+SlimSAM (Segment Anything Model 軽量版) をブラウザ内で推論し、クリックしたポイントをヒントに
+対象のマスクを構築する。外部サーバ・通信は一切使用しない (完全ローカル推論)。
 
 ---
 
 ## 1. 概要
 
 *   **ツール**: 「AI被写体選択」(`ai-select` / ショートカット `A` / アイコン: lucide `scan-search`)
-*   **操作**: キャンバス上の被写体を **クリック** すると、その位置を含む被写体が自動選択される
-*   **選択合成**: 既存の選択系ツールと共通 (`Shift` = 追加 / `Alt` = 除外 / ツールタブの選択合成モード)
-*   **初回セットアップ**: モデル未キャッシュ時は最初のクリックで `.onnx` ファイル選択ダイアログが開く。
-    読み込み済みモデルは **IndexedDB にキャッシュ** され、次回起動時は自動で準備される
+*   **操作**:
+    *   **クリック** = 対象ポイントを追加 → そのポイントを含むオブジェクトのマスクが即座に選択範囲になる
+    *   **クリック追加** = ポイントを増やすほどマスクが改善される (オブジェクトの一部 → 全体)
+    *   **Alt+クリック** = 除外ポイント (その領域をマスクから削る)
+    *   **Enter** = ポイント指定を確定 / **Esc** = ポイントをクリア (選択範囲は維持)
+    *   ツールを離す / ドキュメント差し替え / 編集操作でもポイントはクリアされる (選択範囲は維持)
+*   **初回セットアップ**: モデル未キャッシュ時は最初のクリックで**セットアップモーダル**
+    (ダウンロード元リンク付き) が開く。読み込み済みモデルは **IndexedDB にキャッシュ** され、
+    次回起動時は自動で準備される
 
 ## 2. モデル
 
 | 項目 | 内容 |
 |---|---|
-| モデル | **U-2-Net** (`u2net.onnx` / 約168MB) — rembg 等で配布される変換済み ONNX |
-| ライセンス | Apache-2.0 (U-2-Net 本家 / danielgatis/rembg) |
-| 入力 | `1×3×320×320` float32 / RGB / `/255 → ImageNet の mean/std 正規化` (合成画像を 320×320 へリサイズ) |
-| 出力 | 第一出力 (d0) `1×1×320×320` — saliency map (0〜1) |
-| 実行 | onnxruntime-web (**wasm / CPU・SIMD・単スレッド**) / 実測 数秒程度 (モデル読み込み後の推論) |
+| モデル | **SlimSAM-77-uniform** (Xenova/slimsam-77-uniform 変換版 / Apache-2.0) |
+| 構成 | `vision_encoder.onnx` (23MB) + `prompt_encoder_mask_decoder.onnx` (17MB) の **2ファイル** |
+| encoder 入力 | `pixel_values` `1×3×1024×1024` float32 — 合成画像を 1024×1024 へリサイズし `(x/255 − 0.5) / 0.5` で正規化 (SAM 標準) |
+| encoder 出力 | `image_embeddings` / `image_positional_embeddings` (`1×256×64×64`) |
+| decoder 入力 | `input_points` `1×1×N×2` (1024空間座標) / `input_labels` `1×1×N` int64 (1=陽性, 0=陰性) / 埋め込み ×2 |
+| decoder 出力 | `iou_scores` `1×1×3` / `pred_masks` `1×1×3×256×256` — **IoU 最大の候補を採用** |
+| マスク確定 | **logits > 0** (SAM の標準規則) → ドキュメント解像度へバイリニア拡大 → α≥128 で再二値化 |
+| 実行 | onnxruntime-web (**wasm / CPU・SIMD・単スレッド**) |
 
-*   入出力名はセッションから動的取得 (`session.inputNames[0]` / `outputNames[0]`) するため、
-    rembg 互換の変換モデル (u2netp 等) も入力 320×320 であればそのまま動作する
-*   U-2-Net は 320×320 固定入力が学習条件のため、入力サイズは定数 (`SEG_INPUT_SIZE = 320`) を使用
+*   入出力名・shape は実機で検証済み (`scripts/check-slimsam.cjs` — 実モデルでの推論経路を Node で確認するユーティリティ)
+*   画像埋め込みは「ドキュメントサイズ + 編集リビジョン」をキーにキャッシュされ、
+    **ポイントを動かす反復ではデコーダ (高速) のみ再実行**される。編集・Undo/Redo・画像読み込みで自動無効化
+    (`historyStack.revision` は pushUndo / undo / redo / clear で進み、その際ポイント座標もクリアされる)
 
 ## 3. 配布方式 (ランタイム同梱 / モデルはユーザー読み込み)
 
@@ -37,38 +46,43 @@ U-2-Net (Salient Object Detection) をブラウザ内で推論し、クリック
         (data URI) で同梱し、実行時に **Blob URL 化して `ort.env.wasm.wasmPaths` へ渡す**
         (file:// からの相対読み込みは CORS でブロックされるため blob: 経路が必須)
     *   `vite.config.ts` の `resolve.alias` (`#ort-wasm` / `#ort-loader` / `#ort-module`) を参照
-*   **モデル (168MB) は同梱しない** (HTML 約19.5MB に収めるため)。初回のみユーザーが読み込む
+*   **モデル (合計約40MB) は同梱しない** (HTML 約19.5MB に収めるため)。初回のみユーザーが読み込む
 *   生成物は `dist/index.html` 単一ファイルのまま (モデル等の外部ファイルは不要)
+*   ※ ダウンロード元について: Hugging Face は CORS 許可済み (ブラウザからの自動DLも技術的には可能) だが、
+    embed 時の意図しない大容量通信を避けるため、**ユーザーがリンクから入手 → ファイル読み込み** の
+    オプトイン方式を採用している。GitHub release assets は CORS 非対応 (手動DL専用)
 
 ## 4. モデルキャッシュ (`src/ai/modelStore.ts`)
 
 | 項目 | 内容 |
 |---|---|
-| 保存先 | IndexedDB (`jspaint.ai` / store `models` / key `u2net-176m`) |
+| 保存先 | IndexedDB (`jspaint.ai` / store `models` / key `slimsam-encoder` / `slimsam-decoder`) |
 | フォールバック | IndexedDB 不可・容量オーバー時はメモリ内キャッシュ (タブ終了で消失、再読み込み案内) |
-| 管理UI | ツールタブの「AIモデル」ブロック: 状態表示 / 読み込む / 削除 |
-| 検証 | 拡張子 `.onnx` と最小サイズ (64B) のみ事前チェック。不正ファイルは ort 生成時の例外で案内 |
+| 管理UI | ツールタブの「AIモデル」ブロック: 状態表示 / 読み込む (複数選択可・ファイル名で自動振り分け) / 削除 / ダウンロード元… |
+| 検証 | 拡張子 `.onnx` と最小サイズ (256B) のみ事前チェック。不正ファイルは ort 生成時の例外で案内 |
 
-*   キャッシュ状態はツール選択時に非同期で確認され (`warmup()`)、見つかればセッションを準備する。
-    状態は「未読み込み / モデル準備中… / 利用可能 (キャッシュ済み)」でパネルへ表示される
+*   キャッシュ状態はツール選択時に非同期で確認され (`warmup()`)、両ファイル揃えばセッションを準備する。
+    状態は「未読み込み (2ファイル) / モデル準備中… / 解析中… / 利用可能 (キャッシュ済み)」でパネルへ表示される
 *   セッション生成中・推論中はカーソルが `wait` になり、ボタンが無効化される
 
-## 5. 推論パイプライン (`src/ai/aiSelectController.ts`)
+
+## 5. 推論パイプライン (`src/ai/samController.ts` / `src/ai/samSegmenter.ts`)
 
 ```
-compositeCanvas (表示合成) → 320×320 へ縮小 → RGB/255 正規化 (NCHW)
-  → U-2-Net 推論 → saliency d0
-  → min-max 正規化 (rembg と同じ前処理 / ai/subjectMask.ts)
-  → しきい値化 (ツールタブの「検出しきい値」% / 既定 50)
-  → 4近傍連結成分ラベリング (BFS / 320×320)
-  → クリック点を含む成分を取り出し (成分がなければ案内トースト)
-  → ドキュメント解像度へバイリニア拡大 → α≥128 で再二値化 (白黒マスク化)
-  → SelectionStore.applySelection (新規 / 追加 / 除外) → Marching Ants 反映
+[初回クリック時]
+compositeCanvas (表示合成) → 1024×1024 へリサイズ → (x/255 − 0.5) / 0.5 正規化 (NCHW)
+  → vision_encoder → 画像埋め込み (キャッシュ)
+
+[クリックごと]
+ポイント座標を 1024 空間へ線形変換 (docX × 1024 / docW)
+  → prompt_encoder_mask_decoder (埋め込み + input_points/labels) → IoU 最大の pred_masks
+  → logits > 0 で二値化 (256×256) → ドキュメント解像度へバイリニア拡大 → α≥128 で再二値化
+  → SelectionStore.applySelection (常に置き換え) → Marching Ants 反映
 ```
 
-*   **推論キャッシュ**: saliency map は「ドキュメントサイズ + 編集リビジョン」をキーにキャッシュされ、
-    同一内容への連続クリック (成分の選び直し) では再推論しない。編集・Undo/Redo・画像読み込みで
-    自動無効化 (`historyStack.revision` は pushUndo / undo / redo / clear で進む)
+*   ポイント追加は `ensureEmbedding()` (埋め込み準備) → ポイント push → decode の順で行う。
+    埋め込み準備時にドキュメント変更を検知した場合は**古いポイント座標をクリアしてから**現在のクリックを push する
+    (デコードが 0 ポイントで失敗しないよう、push は常にクリア後に行う)
 *   推論はメインスレッドで実行されるため、実行前に 1 フレーム待って Busy 表示 (カーソル / ステータス)
     を描画させてから block する
 *   クリックがドキュメント外の場合は何もしない
@@ -78,50 +92,54 @@ compositeCanvas (表示合成) → 320×320 へ縮小 → RGB/255 正規化 (NCH
 ### 6.1 セットアップモーダル (ダウンロード元の案内)
 
 *   モデル未読み込みの状態で AI ツールを**クリック**すると開く (ツールタブの「ダウンロード元…」ボタンでも開閉可 / `Esc`・`閉じる`・背景クリックで閉じる)
-*   内容: 必要なファイル (u2net.onnx / 約168MB) と手順の説明 + **ダウンロード元リンク** (`src/ai/modelSources.ts` のデータから描画):
+*   内容: 必要な 2 ファイルの説明 + **ダウンロード元リンク** (`src/ai/modelSources.ts` のデータから描画):
 
-| 種別 | 配布元 | URL |
+| 種別 | ファイル | URL |
 |---|---|---|
-| 公式 | GitHub — rembg リリース | `https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx` (rembg 本体が使用する URL / MD5: `60024c5c889badc19c04ad937298a77b`) |
-| ミラー | Hugging Face — tomjackson2023/rembg | `https://huggingface.co/tomjackson2023/rembg/resolve/main/u2net.onnx` (176 MB) |
+| エンコーダ | `vision_encoder.onnx` (23MB) | `https://huggingface.co/Xenova/slimsam-77-uniform/resolve/main/onnx/vision_encoder.onnx` |
+| デコーダ | `prompt_encoder_mask_decoder.onnx` (17MB) | `https://huggingface.co/Xenova/slimsam-77-uniform/resolve/main/onnx/prompt_encoder_mask_decoder.onnx` |
 
-*   「モデルを読み込む…」ボタンでファイル選択ダイアログへ進む
+*   「モデルを読み込む…」ボタンでファイル選択ダイアログへ進む (2つまとめて選択可・ファイル名で自動振り分け)
 *   注記: ダウンロードにはインターネット接続が必要 (推論自体はブラウザ内で完結し画像は送信されない)
+*   モデル一覧ページ: `https://huggingface.co/Xenova/slimsam-77-uniform`
 
 ### 6.2 ツールタブ (選択時のみ表示 / `data-show="ai-select"`)
 
 | 要素 | 内容 |
 |---|---|
-| 検出しきい値 | 5〜95% スライダー (既定 50)。saliency の正規化値との比較閾値。上げると確実な領域のみ・下げると広く検出 |
-| AIモデル状態表示 | 「未読み込み / モデル準備中… / 解析中… / 利用可能 (キャッシュ済み)」(緑強調は利用可能時) |
-| 読み込む / 削除 / ダウンロード元… | `.onnx` ファイル選択ダイアログ / キャッシュ削除 (セッション解放 + IndexedDB 削除) / セットアップモーダル (6.1) を開く |
-| 補足説明 | モデルの入手元 (rembg 配布の u2net.onnx / Apache-2.0) の案内 |
-| 選択合成モード | 既存の選択系と共通 (新規 / 追加 / 除外) |
+| SAMポイント | 「ポイントをクリア」ボタン (クリックで指定したポイントをクリア / 選択範囲は維持) |
+| AIモデル状態表示 | 「未読み込み (2ファイル) / モデル準備中… / 解析中… / 利用可能 (キャッシュ済み)」(緑強調は利用可能時) |
+| 読み込む / 削除 / ダウンロード元… | `.onnx` ファイル選択ダイアログ (複数選択可) / キャッシュ削除 (両キー解放) / セットアップモーダル (6.1) を開く |
+| 補足説明 | モデルの入手元 (Xenova/slimsam-77-uniform / Apache-2.0) の案内 |
+| 選択合成モード | 既存の選択系と共通 (SAM 選択は常に新規置き換えだが、確定後に他ツールで追加・除外が可能) |
 
 ### 6.3 ステータスバー / トースト
 
-*   ガイド: 「クリックした被写体をAIが自動選択 · Shift=追加 / Alt=除外 · 初回のみ u2net.onnx を読み込み」
-*   成功トースト: `AI被写体選択 (N px · しきい値 T%)`
-*   未検出: 「クリック位置に被写体が見つかりません — しきい値を下げてください」
-*   モデル読み込み成功: `u2net.onnx を読み込みました (キャッシュ済み — 次回から自動起動)`
+*   ガイド: 「クリック = 対象を指定して自動選択 · Alt+クリック = 除外 · 追加クリックでマスクを改善 · Enter = 確定 / Esc = ポイントクリア …」
+*   更新トースト: `AI選択を更新 (IoU NN% · ポイント N件)`
+*   モデル読み込み成功: `AIモデルを読み込みました — 被写体をクリックして選択`
 
 ## 7. テスト (`npm run test:aisubject`)
 
-*   **Part 1 (Node)**: `subjectMask` 純関数の単体テスト (正規化 / しきい値 / 連結成分 / ラベル取得)
-*   **Part 2 (E2E / puppeteer)**: スタブ ONNX (`scripts/fixtures/u2net-stub.onnx` —
-    `scripts/make-stub-model.mjs` が ONNX protobuf を直書きで生成する「入力のチャンネル平均を
-    saliency として返す」最小モデル / 145バイト) を使い、本物の168MBモデルなしでパイプライン全体を検証:
+*   スタブ ONNX (`scripts/fixtures/vision_encoder-stub.onnx` +
+    `prompt_encoder_mask_decoder-stub.onnx` — `scripts/make_stub_sam.py` が生成する
+    「チャンネル平均を埋め込み / logits として返す」最小モデル) を使い、
+    本物のモデルなしでパイプライン全体を検証:
     *   dist が単一ファイルのこと (wasm 分離なし = file:// で動作する条件)
-    *   ツール選択 / パネル表示 / ステータス遷移 / **セットアップモーダル (ダウンロード元リンク・開閉)**
-    *   SVG テスト画像 (暗い背景 + 矩形A #eee + 矩形B #ddd) での選択・追加・除外・しきい値
-    *   **IndexedDB 永続化** (リロード後の自動ウォームアップ) とモデル削除
-*   注意: スタブモデルの protobuf は `ints` 属性を **proto2 非packed** で書く必要がある
-    (packed エンコードは ort のパーサが拒否する)。min-max 正規化済みのしきい値判定は
-    mean/std 前処理の有無に影響されない (E2E は前処理修正後も同一期待値で合格する)
+    *   ツール選択 / パネル表示 / ステータス遷移 / セットアップモーダル (ダウンロード元リンク・開閉)
+    *   SVG テスト画像 (暗い背景 + 矩形A #eee + 矩形B #ddd) でのポイント選択:
+        スタブ logits は「明るい領域ほど正」のため、クリック 1 回で A∪B が選択される (決定論的)
+    *   Enter / Esc (ポイントの確定・クリアと選択範囲の維持)
+    *   **IndexedDB 永続化** (リロード後の自動ウォームアップ — 2キー) とモデル削除
+*   スタブ生成は Python + onnx で行う (`python scripts/make_stub_sam.py`)。
+    検証スクリプトは fixtures が消失した場合に自動で再生成を試みる
+*   実モデルでの推論経路確認: `node scripts/check-slimsam.cjs` (models/slimsam/ に実モデルが必要・gitignore 対象)
 
 ## 8. 制限・今後の拡張
 
-*   推論はメインスレッド (Web Worker 未使用) — 大きな画像でも 320×320 推論のため実用上は問題なし
-*   saliency キャッシュ無効化はレイヤー表示切替を追跡しない (編集リビジョンベース)
-*   将来拡張: WebGPU EP (`ort-wasm-simd-threaded.jsep.wasm` を同様にユーザー読み込みで追加可能)、
-    モデルの選択肢追加 (u2netp 軽量版 / ISNet 高精度版)
+*   推論はメインスレッド (Web Worker 未使用) — エンコーダはドキュメント1回のみのため実用上は問題なし
+*   ボックスプロンプト (ドラッグで囲んで選択) は未対応 — Xenova 版 ONNX に box 入力がないため。
+    今後は自前エクスポート (optimum) などで対応候補
+*   前処理は正方形への単純スケール (アスペクト比を無視) — SAM 標準のパディング方式への改善候補
+*   将来拡張: WebGPU EP 対応 / SAM2 系モデル / 推論の Web Worker 移行
+

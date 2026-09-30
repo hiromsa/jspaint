@@ -8,6 +8,7 @@ import { hooks } from "../core/hooks";
 import { interaction } from "../core/interactionState";
 import { selection } from "../core/selectionStore";
 import { history } from "../core/historyStack";
+import { samSelect } from "../ai/samController";
 import { deleteSelectionContents, deselect, fillSelection, selectAll } from "../core/selectionOps";
 import { copySelection, cutSelection } from "../core/clipboard";
 import { fitView, setZoom } from "../core/viewState";
@@ -55,6 +56,8 @@ function onKeyDown(e: KeyboardEvent): void {
     if (!($("#modal-export") as HTMLElement).hidden) { closeExport(); return; }
     // AIモデルセットアップモーダル (ダウンロード元の案内)
     if (!($("#modal-ai-model") as HTMLElement).hidden) { closeAiModelSetup(); return; }
+    // SAMポイントのクリア (選択範囲は維持)
+    if (samSelect.hasPoints) { samSelect.resetPoints(true); return; }
     // パペットワープセッションの取消 (進行中の変形を破棄)
     if (warpSession.active) { warpSession.cancel(); return; }
     if (interaction.polyDrag || interaction.polyPoints.length > 0) { cancelPolygon(); return; }
@@ -65,6 +68,8 @@ function onKeyDown(e: KeyboardEvent): void {
     return;
   }
   if (e.key === "Enter" && warpSession.active) { e.preventDefault(); warpSession.commit(); return; }
+  // SAMポイントの確定 (選択範囲は既に反映済み。ポイント指定を終了する)
+  if (e.key === "Enter" && samSelect.hasPoints) { samSelect.resetPoints(true); return; }
   if (e.key === "Enter" && state.tool === "polygon") { closePolygon(); return; }
   if (e.key === "Delete" && selection.hasSelection) {
     deleteSelectionContents();

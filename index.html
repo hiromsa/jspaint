@@ -291,22 +291,21 @@
           </div>
 
           <div class="ctrl" data-show="ai-select">
-            <div class="ctrl__row">
-              <label for="ctl-ai-threshold">検出しきい値</label>
-              <span class="ctrl__val mono" id="ctl-ai-threshold-val">50 %</span>
+            <div class="ctrl__label">SAMポイント <span class="ctrl__sub">クリック = 対象を指定 / Alt+クリック = 除外 · Enter で確定</span></div>
+            <div class="sel-actions">
+              <button class="btn btn--ghost btn--sm" id="btn-sam-clear" title="指定したポイントをクリア (Esc) — 選択範囲は維持されます"><i data-icon="x"></i>ポイントをクリア</button>
             </div>
-            <input type="range" id="ctl-ai-threshold" min="5" max="95" step="1" value="50" />
           </div>
 
           <div class="ctrl" data-show="ai-select">
-            <div class="ctrl__label">AIモデル (U-2-Net .onnx)</div>
+            <div class="ctrl__label">AIモデル (SlimSAM .onnx × 2)</div>
             <div class="ai-model-status mono" id="ai-model-status">未読み込み</div>
             <div class="sel-actions">
               <button class="btn btn--ghost" id="btn-ai-model-load" title="u2net.onnx を選択して読み込み (IndexedDB にキャッシュされ、次回から自動で使われます)"><i data-icon="folder-open"></i>読み込む</button>
               <button class="btn btn--ghost" id="btn-ai-model-remove" title="キャッシュしたAIモデルを削除"><i data-icon="trash-2"></i>削除</button>
               <button class="btn btn--ghost btn--sm" id="btn-ai-model-help" title="モデルのダウンロード元を表示 (u2net.onnx / 約168MB)"><i data-icon="download"></i>ダウンロード元…</button>
             </div>
-            <p class="fx-desc">rembg 等で配布される U-2-Net の u2net.onnx (約168MB / Apache-2.0) を使用します。「ダウンロード元…」から入手し、初回のみ読み込み、以降はキャッシュから起動します。</p>
+            <p class="fx-desc">SlimSAM (Apache-2.0) の <b>vision_encoder.onnx (23MB)</b> と <b>prompt_encoder_mask_decoder.onnx (17MB)</b> の2ファイルを使用します。「ダウンロード元…」から入手し、初回のみ読み込むとキャッシュされます。</p>
           </div>
 
           <div class="ctrl" data-show="select-rect,lasso,polygon,wand,mask-pen,ai-select">
@@ -442,7 +441,7 @@
     <div class="statusbar__group">
       <span class="mono st-zoom" id="st-zoom">100%</span>
       <span class="vdiv"></span>
-      <span class="mono st-ver">JSPaint v0.2.17 · TypeScript</span>
+      <span class="mono st-ver">JSPaint v0.2.18 · TypeScript</span>
     </div>
   </footer>
 
@@ -484,14 +483,14 @@
       <header class="modal__head">
         <div>
           <h2 id="ai-modal-title">AIモデルのセットアップ</h2>
-          <p class="modal__sub">初回のみ u2net.onnx (約168MB) をダウンロードして読み込みます</p>
+          <p class="modal__sub">初回のみ SlimSAM モデル 2ファイル (合計 約40MB) をダウンロードして読み込みます</p>
         </div>
         <button class="iconbtn" data-ai-close title="閉じる (Esc)"><i data-icon="x"></i></button>
       </header>
       <div class="modal__body">
-        <p class="fx-desc">AI被写体選択には U-2-Net モデル (<b>u2net.onnx</b>) が必要です。下のリンクからダウンロードし、「モデルを読み込む…」で選択してください。読み込んだモデルはブラウザ (IndexedDB) にキャッシュされ、次回からは自動で使われます。</p>
+        <p class="fx-desc">AI被写体選択には SlimSAM モデル (<b>vision_encoder.onnx</b> と <b>prompt_encoder_mask_decoder.onnx</b>) が必要です。下のリンクからダウンロードし、「モデルを読み込む…」で2つまとめて選択してください。読み込んだモデルはブラウザ (IndexedDB) にキャッシュされ、次回からは自動で使われます。</p>
         <div class="ai-sources" id="ai-source-list"><!-- src/ai/modelSources.ts から生成 --></div>
-        <p class="fx-desc">※ ダウンロードにはインターネット接続が必要です (推論自体はブラウザ内で完結し、画像がどこかに送信されることはありません)。</p>
+        <p class="fx-desc">※ ダウンロードにはインターネット接続が必要です (推論自体はブラウザ内で完結し、画像がどこかに送信されることはありません)。モデル一覧: <a class="ai-repo-link" href="https://huggingface.co/Xenova/slimsam-77-uniform" target="_blank" rel="noopener noreferrer">huggingface.co/Xenova/slimsam-77-uniform</a></p>
       </div>
       <footer class="modal__foot">
         <button class="btn btn--ghost" data-ai-close>閉じる</button>
@@ -504,7 +503,7 @@
 
   <!-- 画像読み込み用の隠し file input (スタンドアロンの「開く」ボタンから利用) -->
   <input type="file" id="file-open" class="sr-only" accept="image/*" />
-  <input type="file" id="file-ai-model" class="sr-only" accept=".onnx" />
+  <input type="file" id="file-ai-model" class="sr-only" accept=".onnx" multiple />
 
   <script type="module" src="/src/main.ts"></script>
 </div>

@@ -37,9 +37,10 @@ npm run test:aisubject # AI被写体選択 (スタブONNX + IndexedDB キャッ�
 - ブラシ / 消しゴム / 図形 / 塗りつぶし (スキャンライン flood fill・許容度対応)
 - 矩形・投げ縄・多角形 (**クリック=頂点追加 / ドラッグ=フリーハンド**)・魔法の杖による選択
 - **選択ペン** (`K`): ドラッグで選択マスクを直接描画 (追加/除外モード対応)
-- **AI被写体選択** (`A`): クリックした被写体を U-2-Net 推論で自動選択。ランタイム (onnxruntime-web) は単一HTMLへ同梱、
-  モデル (u2net.onnx / Apache-2.0) は初回のみ読み込んで IndexedDB にキャッシュ (次回から自動起動)。
-  しきい値調整・選択合成モード (新規/追加/除外) 対応。詳細は [docs/specification/ai-subject-select.md](docs/specification/ai-subject-select.md)
+- **AI被写体選択** (`A`): クリックしたポイントをヒントに SlimSAM がオブジェクトのマスクを生成する**対話型セグメンテーション**。
+  追加クリックでマスクを改善、Alt+クリックで領域を除外。ランタイム (onnxruntime-web) は単一HTMLへ同梱、
+  モデル (SlimSAM ×2ファイル / Apache-2.0) は初回のみ読み込んで IndexedDB にキャッシュ。
+  詳細は [docs/specification/ai-subject-select.md](docs/specification/ai-subject-select.md)
 - **膨張ブラシ** (`V`): ブラシ中心を基準にピクセルを放射状に押し広げるリキフィ系ツール。**押しっぱなしにしている間、その場で時間ベースに持続適用**され、ドラッグで膨らませる位置を移動できる。「効果の方向」で膨張 / 収縮を切替 (Alt で一時反転)。サイズ = radius、強さ = strength。選択範囲限定・編集対象レイヤー複数適用・Undo対応
 - **フィルターペン** (`F`): フィルタータブで有効中のフィルターを、ペンでなぞった範囲に直接焼き込む (サイズ・適用の強さ・選択範囲限定 / 1ストローク内では効果が一定)
 - 選択合成モード: 新規 / ＋追加 (Shift) / −除外 (Alt)

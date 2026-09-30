@@ -3,7 +3,7 @@
  * ツールごとの down / move / up ディスパッチ、パン、ズームホイール、多角形選択の確定。
  */
 import { floodMask, tintMask } from "../core/canvasUtils";
-import { aiSelect } from "../ai/aiSelectController";
+import { samSelect } from "../ai/samController";
 import { doc } from "../core/documentStore";
 import { history } from "../core/historyStack";
 import { filterPenFx } from "../core/filterEngine";
@@ -161,11 +161,12 @@ function onPointerDown(e: PointerEvent): void {
     }
     case "ai-select": {
       // モデル未読み込みならセットアップモーダル (ダウンロード元の案内) を開く
-      if (!aiSelect.modelReady) {
+      if (!samSelect.modelReady) {
         openAiModelSetup();
         break;
       }
-      if (!aiSelect.isBusy) void aiSelect.selectAt(d.x, d.y, interaction.dragMods ?? state.selMode);
+      // クリック = 対象ポイント / Alt+クリック = 除外ポイント。ポイント全体からマスクを再構成する
+      if (!samSelect.isBusy) void samSelect.addPoint(d.x, d.y, !e.altKey);
       break;
     }
     case "eyedropper": {

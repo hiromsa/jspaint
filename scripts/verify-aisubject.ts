@@ -1,14 +1,14 @@
 /**
- * scripts/verify-aisubject.ts — AI被写体選択 (U-2-Net) の検証
+ * scripts/verify-aisubject.ts — AI被写体選択 (SlimSAM 対話セグメンテーション) の E2E 検証
  *
- * Part 1: subjectMask 純関数の Node 単体テスト (正規化 / しきい値 / 連結成分)
- * Part 2: ブラウザ E2E — スタブ ONNX (scripts/make-stub-model.mjs 生成) で
- *         file:// + IndexedDB キャッシュ込みのパイプライン全体を検証する
+ * スタブ ONNX (scripts/make_stub_sam.py が生成 — 「チャンネル平均を logits として返す」最小モデル)
+ * を使い、本物のモデル (約40MB ×2) なしでパイプライン全体を検証する:
  *
- *   テスト画像: SVG で「暗い背景 (#111) + 明るい矩形A (#eee) + やや明るい矩形B (#ddd)」を描く。
- *   スタブモデルはチャンネル平均 (≒輝度) を saliency として返すため、
- *   正規化後の値は A = 1.0 / B = 0.923 / 背景 = 0 となり、しきい値 50% では A+B、
- *   95% では A のみが二値化される (決定論的に検証できる)。
+ *   - dist が単一ファイルのこと (wasm 分離なし = file:// で動作する条件)
+ *   - ツール選択 / パネル表示 / ステータス遷移 / セットアップモーダル (ダウンロード元リンク)
+ *   - SVG テスト画像 (暗い背景 + 矩形A #eee + 矩形B #ddd) でのポイント選択:
+ *     スタブ logits は「明るい領域ほど正」のため、クリック1回で A∪B が選択される (決定論的)
+ *   - Enter / Esc (ポイントの確定・クリア) / **IndexedDB 永続化** (リロード後の自動ウォームアップ) / モデル削除
  *
  * 実行: npm run test:aisubject  (事前に npm run build 必須)
  * ブラウザ: インストール済みの Chrome / Edge を自動検出して使用
@@ -18,8 +18,6 @@ import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:
 import { pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { buildStubOnnx } from "./make-stub-model.mjs";
-import { labelAt, labelComponents, maskOfLabel, normalizeMinMax, thresholdMap } from "../src/ai/subjectMask";
 
 const BROWSER_CANDIDATES = [
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
@@ -29,7 +27,10 @@ const BROWSER_CANDIDATES = [
 ];
 
 const distFile = path.resolve(process.cwd(), "dist", "index.html");
-const stubFile = path.resolve(process.cwd(), "scripts", "fixtures", "u2net-stub.onnx");
+const stubFiles = [
+  path.resolve(process.cwd(), "scripts", "fixtures", "vision_encoder-stub.onnx"),
+  path.resolve(process.cwd(), "scripts", "fixtures", "prompt_encoder_mask_decoder-stub.onnx"),
+];
 /** テスト画像の1辺 (既定ドキュメントと同じ 640) */
 const DOC = 640;
 
@@ -48,47 +49,19 @@ function ok(name: string, cond: boolean, detail = ""): void {
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-/* ============ Part 1: subjectMask 純関数 (Node) ============ */
-
-function runPureTests(): void {
-  console.log("\n[Part 1] subjectMask 純関数 (Node)");
-
-  const norm = normalizeMinMax(Float32Array.from([0.2, 0.4, 0.6, 0.8]));
-  ok("normalizeMinMax: min→0 / max→1", norm[0] === 0 && norm[3] === 1, JSON.stringify([...norm]));
-  ok("normalizeMinMax: 中間値が線形", Math.abs(norm[1] - 1 / 3) < 1e-6 && Math.abs(norm[2] - 2 / 3) < 1e-6);
-
-  const flat = normalizeMinMax(Float32Array.from([0.5, 0.5, 0.5]));
-  ok("normalizeMinMax: 単色はすべて0 (被写体なし扱い)", [...flat].every((v) => v === 0));
-
-  const bin = thresholdMap(Float32Array.from([0.49, 0.5, 0.51]), 0.5);
-  ok("thresholdMap: しきい値以上が1 (以上で境界含む)", bin[0] === 0 && bin[1] === 1 && bin[2] === 1);
-
-  /* 2 つの矩形 + 対角のみの独立点 (4近傍では連結しない) */
-  const w = 8;
-  const mask = new Uint8Array(w * w);
-  mask[1 * w + 1] = 1;
-  mask[1 * w + 2] = 1; // 成分A: (1,1)(2,1)
-  mask[2 * w + 2] = 1; // 成分A: (2,2) — (2,1) の縦隣 (4近傍で連結)
-  mask[4 * w + 4] = 1; // 成分B: (4,4) — (2,2) との対角は連結しない
-  mask[6 * w + 6] = 1;
-  mask[7 * w + 6] = 1; // 成分C: (6,6)(7,6)
-  const { labels, sizes, count } = labelComponents(mask, w, w);
-  ok("labelComponents: 成分数は 3 (対角は連結しない)", count === 3, `count=${count} sizes=${JSON.stringify([...sizes])}`);
-  ok("labelComponents: 成分サイズ", sizes[1] === 3 && sizes[2] === 1 && sizes[3] === 2, JSON.stringify([...sizes]));
-  ok("labelAt: 成分内の点", labelAt(labels, w, 1, 1) > 0 && labelAt(labels, w, 4, 4) > 0 && labelAt(labels, w, 6, 6) > 0);
-  ok("labelAt: 異なる成分は別ラベル", labelAt(labels, w, 2, 1) !== labelAt(labels, w, 7, 6));
-  ok("labelAt: 背景は 0", labelAt(labels, w, 0, 0) === 0);
-  ok("labelAt: 範囲外は 0", labelAt(labels, w, -5, -5) === 0);
-
-  const only = maskOfLabel(mask, labels, labelAt(labels, w, 6, 6));
-  ok("maskOfLabel: 指定成分のみ残る", only[6 * w + 6] === 1 && only[7 * w + 6] === 1 && only[1 * w + 1] === 0 && only[4 * w + 4] === 0);
-}
-
-
-/* ============ Part 2: ブラウザ E2E ============ */
+/* ============ ヘルパー ============ */
 
 async function modelStatusText(page: Page): Promise<string> {
   return page.evaluate(() => (document.querySelector("#ai-model-status") as HTMLElement).textContent ?? "");
+}
+
+async function waitForStatus(page: Page, text: string, timeoutMs = 20000): Promise<boolean> {
+  try {
+    await page.waitForFunction((t) => ((document.querySelector("#ai-model-status") as HTMLElement)?.textContent ?? "").includes(t), { timeout: timeoutMs }, text);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function toastText(page: Page): Promise<string> {
@@ -125,15 +98,6 @@ async function clickAndToast(page: Page, dx: number, dy: number, text: string, m
   await clickDoc(page, dx, dy, mod);
   const hit = await waitForNewToast(page, text);
   return { hit, toast: await toastText(page) };
-}
-
-async function waitForStatus(page: Page, text: string, timeoutMs = 20000): Promise<boolean> {
-  try {
-    await page.waitForFunction((t) => ((document.querySelector("#ai-model-status") as HTMLElement)?.textContent ?? "").includes(t), { timeout: timeoutMs }, text);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /** doc 座標 → 画面座標へ変換してクリックする (fitView の式を再現 / doc は 640x640) */
@@ -192,15 +156,6 @@ async function undoOnce(page: Page): Promise<void> {
   await sleep(200);
 }
 
-async function setThreshold(page: Page, value: number): Promise<void> {
-  await page.evaluate((v) => {
-    const el = document.querySelector("#ctl-ai-threshold") as HTMLInputElement;
-    el.value = String(v);
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-  }, value);
-  await sleep(100);
-}
-
 /** テスト画像 (暗い背景 + 矩形A #eee + 矩形B #ddd) の SVG を書き出す */
 function writeTestImage(dir: string): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${DOC}" height="${DOC}"><rect width="${DOC}" height="${DOC}" fill="#111111"/><rect x="80" y="80" width="200" height="200" fill="#eeeeee"/><rect x="360" y="360" width="200" height="200" fill="#dddddd"/></svg>`;
@@ -210,8 +165,10 @@ function writeTestImage(dir: string): string {
 }
 
 
+/* ============ E2E 本体 ============ */
+
 async function runE2E(): Promise<void> {
-  console.log("\n[Part 2] ブラウザ E2E (file:// + IndexedDB + スタブONNX)");
+  console.log("\n[E2E] file:// + IndexedDB + スタブ SlimSAM");
 
   /* ビルドの単一性: wasm が別ファイルに分離していないこと (file:// では fetch できない) */
   const distFiles = readdirSync(path.dirname(distFile));
@@ -228,8 +185,6 @@ async function runE2E(): Promise<void> {
   const browser = await puppeteer.launch({ executablePath, headless: true });
   const page = await browser.newPage();
   await page.setViewport({ width: 1600, height: 900 });
-
-  /* ブラウザログの記録 (失敗時の詳細を出すため) */
   const consoleLog: string[] = [];
   page.on("console", (m) => consoleLog.push(`[${m.type()}] ${m.text()}`));
   page.on("pageerror", (e) => consoleLog.push(`[pageerror] ${e.message}`));
@@ -241,7 +196,7 @@ async function runE2E(): Promise<void> {
 
     /* --- 1) AIツールの選択と初期状態 --- */
     await page.click('[data-tool="ai-select"]');
-    await sleep(200);
+    await sleep(250);
     const title = await page.evaluate(() => (document.querySelector("#tool-title") as HTMLElement).textContent ?? "");
     ok("ツールボタンで「AI被写体選択」を選択できる", title === "AI被写体選択", title);
     const panelVisible = await page.evaluate(() => {
@@ -249,15 +204,15 @@ async function runE2E(): Promise<void> {
       return el ? !el.classList.contains("is-hidden") : false;
     });
     ok("ツールタブにAI選択の設定ブロックが表示される", panelVisible);
-    ok("初期状態のモデルステータスは「未読み込み」", (await modelStatusText(page)) === "未読み込み", await modelStatusText(page));
+    ok("初期状態のモデルステータスは「未読み込み」", (await modelStatusText(page)) === "未読み込み (2ファイル)", await modelStatusText(page));
 
     /* --- 1b) モデル未読み込みでクリック → セットアップモーダル (ダウンロード元の案内) --- */
     await clickDoc(page, 180, 180);
     ok("モデル未読み込みのクリックでセットアップモーダルが開く", await page.evaluate(() => !(document.querySelector("#modal-ai-model") as HTMLElement).hidden));
     const sources = await page.evaluate(() => [...document.querySelectorAll("#ai-source-list a.ai-source")].map((a) => (a as HTMLAnchorElement).href));
     ok(
-      "ダウンロード元リンクが2件表示される (GitHub公式 / HuggingFaceミラー)",
-      sources.length === 2 && sources[0].includes("github.com/danielgatis/rembg/releases/download") && sources[1].includes("huggingface.co/tomjackson2023/rembg"),
+      "ダウンロード元リンクが2件表示される (エンコーダ / デコーダ)",
+      sources.length === 2 && sources[0].includes("vision_encoder.onnx") && sources[1].includes("prompt_encoder_mask_decoder.onnx"),
       JSON.stringify(sources),
     );
     await page.keyboard.press("Escape");
@@ -274,70 +229,54 @@ async function runE2E(): Promise<void> {
     const dim = await page.evaluate(() => (document.querySelector("#doc-dim") as HTMLElement).textContent ?? "");
     ok("テスト画像 (640×640) でドキュメントを差し替え", dim.includes("640"), dim);
 
-    /* --- 3) スタブモデル (.onnx) を読み込む → ort起動 + IndexedDB キャッシュ --- */
+    /* --- 3) スタブモデル ×2 を読み込む → ort起動 + IndexedDB キャッシュ --- */
     const modelInput = await page.$("#file-ai-model");
-    await modelInput!.uploadFile(stubFile);
+    await modelInput!.uploadFile(...stubFiles);
     const loaded = await waitForStatus(page, "利用可能");
-    ok("モデル読み込み後、ステータスが「利用可能」になる", loaded, `${await modelStatusText(page)} | logs: ${consoleLog.slice(-6).join(" / ")}`);
+    ok("両モデルの読み込み後、ステータスが「利用可能」になる", loaded, `${await modelStatusText(page)} | ${consoleLog.slice(-4).join(" / ")}`);
 
-    /* --- 4) 矩形A をクリック → 選択 → 塗りつぶしで検証 --- */
-    const r4 = await clickAndToast(page, 180, 180, "AI被写体選択");
-    ok("AI選択の完了トーストが出る", r4.hit, r4.toast);
+    /* --- 4) クリックでポイント指定 → マスク (スタブは明るい領域 A∪B) が選択される --- */
+    await markToasts(page);
+    await clickDoc(page, 180, 180);
+    const r4 = await waitForNewToast(page, "AI選択を更新");
+    ok("ポイント指定のトースト (IoU付き) が出る", r4, `${(await toastText(page)).slice(-120)} | ${consoleLog.slice(-10).join(" / ")}`);
     await fillSelection(page);
     const a1 = await blueInDocRect(page, 80, 80, 280, 280);
     const b1 = await blueInDocRect(page, 360, 360, 560, 560);
     const bg1 = await blueInDocRect(page, 20, 20, 70, 70);
     ok("矩形A が選択され塗りつぶされている", a1.blue > a1.total * 0.9, JSON.stringify(a1));
-    ok("矩形B は非選択", b1.blue < 10, JSON.stringify(b1));
-    ok("背景も非選択", bg1.blue < 10, JSON.stringify(bg1));
+    ok("矩形B も同時に選択されている (スタブは明るい領域全体を返す)", b1.blue > b1.total * 0.9, JSON.stringify(b1));
+    ok("背景は非選択", bg1.blue < 10, JSON.stringify(bg1));
 
-    /* --- 5) Shift+クリック (追加) --- */
+    /* --- 5) Esc でポイントをクリア (選択範囲は維持) --- */
     await undoOnce(page);
-    const r5 = await clickAndToast(page, 460, 460, "AI被写体選択", "shift");
-    ok("追加選択のトーストが出る", r5.hit, r5.toast);
+    await page.keyboard.press("Escape");
+    ok("Esc でポイントクリアのトーストが出る", await waitForNewToast(page, "ポイントをクリア"));
     await fillSelection(page);
     const a2 = await blueInDocRect(page, 80, 80, 280, 280);
-    const b2 = await blueInDocRect(page, 360, 360, 560, 560);
-    ok("Shift+クリックで矩形B が追加される", a2.blue > a2.total * 0.9 && b2.blue > b2.total * 0.9, `A=${JSON.stringify(a2)} B=${JSON.stringify(b2)}`);
+    ok("ポイントクリア後も選択範囲は維持される", a2.blue > a2.total * 0.9, JSON.stringify(a2));
 
-    /* --- 6) Alt+クリック (除外) --- */
+    /* --- 6) Enter でポイント指定を確定 --- */
     await undoOnce(page);
-    const r6 = await clickAndToast(page, 460, 460, "AI被写体選択", "alt");
-    ok("除外選択のトーストが出る", r6.hit, r6.toast);
-    await fillSelection(page);
-    const a3 = await blueInDocRect(page, 80, 80, 280, 280);
-    const b3 = await blueInDocRect(page, 360, 360, 560, 560);
-    ok("Alt+クリックで矩形B が除外される", a3.blue > a3.total * 0.9 && b3.blue < 10, `A=${JSON.stringify(a3)} B=${JSON.stringify(b3)}`);
+    await clickDoc(page, 460, 460);
+    ok("追加ポイントのトーストが出る", await waitForNewToast(page, "AI選択を更新"));
+    await page.keyboard.press("Enter");
+    ok("Enter でポイント確定のトーストが出る", await waitForNewToast(page, "ポイントをクリア"));
 
-    /* --- 7) しきい値 95% では矩形B (正規化値 0.923) は検出されない --- */
-    await undoOnce(page);
-    await setThreshold(page, 95);
-    const r7 = await clickAndToast(page, 460, 460, "見つかりません");
-    ok("しきい値超過なしのトーストが出る", r7.hit, r7.toast);
-
-    /* --- 8) しきい値 50% に戻して新規選択 (前の選択は置き換わる) --- */
-    await setThreshold(page, 50);
-    const r8 = await clickAndToast(page, 460, 460, "AI被写体選択");
-    ok("しきい値を戻すと矩形B が選択できる", r8.hit, r8.toast);
-    await fillSelection(page);
-    const a4 = await blueInDocRect(page, 80, 80, 280, 280);
-    const b4 = await blueInDocRect(page, 360, 360, 560, 560);
-    ok("新規選択モードで選択は矩形B だけに置き換わる", b4.blue > b4.total * 0.9 && a4.blue < 10, `A=${JSON.stringify(a4)} B=${JSON.stringify(b4)}`);
-
-    /* --- 9) IndexedDB キャッシュの永続化 (リロード後に自動ウォームアップ) --- */
+    /* --- 7) IndexedDB キャッシュの永続化 (リロード後に自動ウォームアップ) --- */
     await page.reload({ waitUntil: "load" });
     await page.waitForSelector("#layer-list li");
     await page.click('[data-tool="ai-select"]');
     ok("リロード後もキャッシュから「利用可能」になる (IndexedDB 永続化)", await waitForStatus(page, "利用可能", 25000), await modelStatusText(page));
 
-    /* --- 10) モデル削除 --- */
+    /* --- 8) モデル削除 --- */
     await page.evaluate(() => (document.querySelector("#btn-ai-model-remove") as HTMLButtonElement).click());
     ok("削除後、ステータスが「未読み込み」に戻る", await waitForStatus(page, "未読み込み"), await modelStatusText(page));
     await page.reload({ waitUntil: "load" });
     await page.waitForSelector("#layer-list li");
     await page.click('[data-tool="ai-select"]');
     await sleep(2500);
-    ok("削除後のリロードでは「未読み込み」のまま", (await modelStatusText(page)) === "未読み込み", await modelStatusText(page));
+    ok("削除後のリロードでは「未読み込み」のまま", (await modelStatusText(page)).includes("未読み込み"), await modelStatusText(page));
   } finally {
     await browser.close();
     rmSync(tmp, { recursive: true, force: true });
@@ -351,14 +290,17 @@ async function main(): Promise<void> {
     console.error("dist/index.html がありません。先に `npm run build` を実行してください。");
     process.exit(1);
   }
-  // スタブモデルがなければ生成する (リポジトリにはコミット済みだが消失時の自己修復)
-  if (!existsSync(stubFile)) {
-    mkdirSync(path.dirname(stubFile), { recursive: true });
-    writeFileSync(stubFile, buildStubOnnx());
-    console.log(`stub model generated: ${stubFile}`);
+  // スタブモデルがなければ python で生成する (リポジトリにはコミット済みだが消失時の自己修復)
+  if (stubFiles.some((f) => !existsSync(f))) {
+    mkdirSync(path.dirname(stubFiles[0]), { recursive: true });
+    try {
+      require("node:child_process").execSync("python scripts/make_stub_sam.py", { stdio: "inherit", cwd: process.cwd() });
+    } catch {
+      console.error("スタブモデルの生成に失敗しました (python + onnx が必要です)");
+      process.exit(1);
+    }
   }
 
-  runPureTests();
   await runE2E();
 
   console.log(`\n結果: ${passed} 合格 / ${failed} 失敗`);

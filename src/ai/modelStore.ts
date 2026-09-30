@@ -1,7 +1,7 @@
 /**
- * ai/modelStore.ts — セグメンテーションモデル (.onnx) の IndexedDB キャッシュ
+ * ai/modelStore.ts — AIモデル (.onnx) の IndexedDB キャッシュ
  *
- * 初回のみユーザーがモデルファイルを読み込み、以降はキャッシュから起動する。
+ * モデルファイルは初回のみユーザーが読み込み、以降はキャッシュから起動する。
  * file:// などで IndexedDB が使えない / 容量オーバーの場合はメモリ内キャッシュへ
  * フォールバックする (その場合はタブを閉じると再読み込みが必要)。
  */
@@ -11,11 +11,13 @@ const DB_NAME = "jspaint.ai";
 const DB_VERSION = 1;
 const STORE_MODELS = "models";
 
-/** U-2-Net フル (u2net.onnx 約168MB) のキャッシュキー */
-export const U2NET_MODEL_KEY = "u2net-176m";
+/** SlimSAM エンコーダ (vision_encoder.onnx 約23MB) のキャッシュキー */
+export const SLIMSAM_ENCODER_KEY = "slimsam-encoder";
+/** SlimSAM デコーダ (prompt_encoder_mask_decoder.onnx 約16MB) のキャッシュキー */
+export const SLIMSAM_DECODER_KEY = "slimsam-decoder";
 
 /** IndexedDB 不可環境向けのセッション内キャッシュ */
-let memoryCache: ArrayBuffer | null = null;
+const memoryCache = new Map<string, ArrayBuffer>();
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -46,21 +48,21 @@ function withStore<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => 
 }
 
 /** キャッシュ済みモデルの取得 (なければ null。IndexedDB 失敗時はメモリを確認) */
-export async function loadModel(): Promise<ArrayBuffer | null> {
+export async function loadModel(key: string): Promise<ArrayBuffer | null> {
   try {
-    const cached = await withStore<ArrayBuffer | undefined>("readonly", (s) => s.get(U2NET_MODEL_KEY) as IDBRequest<ArrayBuffer | undefined>);
+    const cached = await withStore<ArrayBuffer | undefined>("readonly", (s) => s.get(key) as IDBRequest<ArrayBuffer | undefined>);
     if (cached) return cached;
   } catch {
     // IndexedDB が使えない環境はメモリキャッシュのみ
   }
-  return memoryCache;
+  return memoryCache.get(key) ?? null;
 }
 
 /** モデルをキャッシュへ保存する (容量不足等は false を返す — アプリは継続できる) */
-export async function saveModel(buf: ArrayBuffer): Promise<boolean> {
-  memoryCache = buf;
+export async function saveModel(key: string, buf: ArrayBuffer): Promise<boolean> {
+  memoryCache.set(key, buf);
   try {
-    await withStore("readwrite", (s) => s.put(buf, U2NET_MODEL_KEY) as IDBRequest<IDBValidKey>);
+    await withStore("readwrite", (s) => s.put(buf, key) as IDBRequest<IDBValidKey>);
     return true;
   } catch (e) {
     hooks.toast("モデルをキャッシュできませんでした (次回の起動時に再度読み込みが必要です)", "info");
@@ -70,10 +72,10 @@ export async function saveModel(buf: ArrayBuffer): Promise<boolean> {
 }
 
 /** キャッシュしたモデルを削除する */
-export async function removeModel(): Promise<void> {
-  memoryCache = null;
+export async function removeModel(key: string): Promise<void> {
+  memoryCache.delete(key);
   try {
-    await withStore("readwrite", (s) => s.delete(U2NET_MODEL_KEY) as IDBRequest<undefined>);
+    await withStore("readwrite", (s) => s.delete(key) as IDBRequest<undefined>);
   } catch {
     // 使えない環境ではメモリ解放のみで成立
   }

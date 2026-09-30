@@ -59,13 +59,13 @@ src/
     warpPaint.ts     三角形クリップ + アフィン変換で元画像を転写 (シーム防止パッド付き)
     warpSession.ts   セッション管理 (開始 / ピン操作 / プレビュー / commit・cancel / Undo 統合)
 
-  ai/                AI被写体選択 (U-2-Net 推論) の実装
+  ai/                AI被写体選択 (SlimSAM 対話セグメンテーション) の実装
     ortRuntime.ts    onnxruntime-web の遅延ロードと wasm / ローダー mjs の Blob URL 接続
                      (単一HTML同梱 — vite.config.ts の #ort-* エイリアス参照)
-    modelStore.ts    モデル (.onnx) の IndexedDB キャッシュ (不可環境はメモリフォールバック)
-    subjectMask.ts   saliency → 選択マスクの純関数群 (正規化 / しきい値 / 連結成分ラベリング)
-    u2netSegmenter.ts U-2-Net セッション管理と推論 (320×320 入力 / 出力名は動的取得)
-    aiSelectController.ts クリック点を含む成分を選択範囲へ合成する制御 + saliency キャッシュ
+    modelStore.ts    モデル (.onnx) の IndexedDB キャッシュ (キー汎用 / 不可環境はメモリフォールバック)
+    modelSources.ts  モデルのダウンロード元データ (セットアップモーダルで描画)
+    samSegmenter.ts  SlimSAM エンコーダ (画像→埋め込み) とデコーダ (ポイント→logits) のセッション管理
+    samController.ts ポイント指定→マスク生成→選択範囲反映の制御 + 埋め込みキャッシュ
 
   rendering/         キャンバスへの描画
     renderer.ts      view canvas の管理と render() 本体
@@ -198,18 +198,20 @@ pointerup   → 後始末 → render()
   - ペン設定はドキュメント差し替え時も値を保持する (ツールオプション扱い)。
     ノイズキャッシュのみ実寸依存のため `filterPenFx.onDocResized()` で無効化する。
   - ペン設定がすべて無効のときのストロークは toast で「ツールタブで有効化」を案内する。
-- **AI被写体選択は onnxruntime-web を単一HTMLへ同梱** (v0.2.16):
+- **AI被写体選択は onnxruntime-web を単一HTMLへ同梱** (v0.2.18 / SlimSAM 化):
   - ランタイムは「wasm 外部渡し」ビルド (`ort.min.mjs`) を使用。bundle 版は内部の
     `new URL(..., import.meta.url)` が Vite により全箇所 data URI 化され、同一 wasm が複数埋め込まれて
     約3倍に膨らむため、`vite.config.ts` の `#ort-*` エイリアスで素パス解決して `?url` インラインし、
     実行時に Blob URL 化して `ort.env.wasm.wasmPaths` へ渡す (file:// 相対参照は CORS でブロックされる)。
-  - **モデル (u2net.onnx 約168MB) は同梱しない**。初回のみユーザーが読み込み、IndexedDB
+  - **モデル (SlimSAM ×2ファイル、合計約40MB) は同梱しない**。初回のみユーザーが読み込み、IndexedDB
     (`jspaint.ai`) にキャッシュする。file:// でも IndexedDB は永続化される (E2E で検証)。
-  - 推論は U-2-Net (Apache-2.0) の saliency map → しきい値化 → 4近傍連結成分 → クリック点の成分、
-    という pure 関数パイプライン (`ai/subjectMask.ts` — Node 単体テスト可能) で構成し、
-    UI とは `aiSelectController.onStatusChange` / hooks.toast でのみ接続する。
-  - 推論結果は「ドキュメントサイズ + 編集リビジョン (`historyStack.revision`)」でキャッシュし、
-    編集が入るまでの連続クリック (成分の追加 / 除外 / 選び直し) では再推論しない。
+  - セグメンテーションは**プロンプト可能な SAM 方式**: クリックポイント (陽性 / Alt+クリックで陰性) を
+    デコーダに与えてマスク logits を得る (IoU 最大候補を採用 / logits > 0 で確定)。
+    画像埋め込みは「ドキュメントサイズ + 編集リビジョン」でキャッシュし、ポイント反復はデコーダのみ再実行。
+    ポイント座標は埋め込み準備時にドキュメント変更を検知した場合のみクリアする (0ポイント デコード防止のため
+    push はクリア後に行う)。
+  - モデルは SlimSAM-77-uniform 変換版 (Xenova / Apache-2.0) の 2ファイル。セットアップモーダル
+    (`src/ai/modelSources.ts` から描画) がダウンロード元を案内する。
   - 詳細仕様は [ai-subject-select.md](./ai-subject-select.md) を参照。
 
 ## 6. 検証スクリプト
@@ -222,9 +224,9 @@ pointerup   → 後始末 → render()
   フィルタータブとの独立性 / ペン有効化で画像全体が変わらないこと / なぞった範囲のみ焼き込まれること /
   全体フィルターの従来動作 (プレビュー / 非破壊) / 無効時の案内トースト /
   シャープ (ペンの範囲焼き込み / 全体プレビュー・非破壊 / ベイクと設定リセット) を検証する。
-- `npm run test:aisubject` — AI被写体選択の検証 (Part 1: subjectMask 純関数の node 単体テスト /
-  Part 2: スタブ ONNX によるパイプライン全体の E2E)。
-  スタブモデル (`scripts/fixtures/u2net-stub.onnx` — 入力のチャンネル平均を saliency として返す最小モデル /
-  消失時は verify スクリプトが自動生成) を使い、本物の168MBモデルなしで
-  単一HTMLの単一性 / ツール選択とステータス遷移 / 選択・追加・除外・しきい値 /
-  IndexedDB 永続化 (リロード後の自動ウォームアップ) / モデル削除を検証する。
+- `npm run test:aisubject` — AI被写体選択の E2E 検証 (11 ケース相当)。
+  スタブ ONNX (`scripts/fixtures/` — `python scripts/make_stub_sam.py` で生成する
+  「チャンネル平均を埋め込み / logits として返す」SlimSAM 互換の最小モデル ×2) を使い、
+  本物のモデルなしで 単一HTMLの単一性 / ツール選択とステータス遷移 / セットアップモーダル /
+  ポイント選択 (追加・クリア・確定) / **IndexedDB 永続化** (リロード後の自動ウォームアップ) / モデル削除を検証する。
+  実モデルでの推論経路は `node scripts/check-slimsam.cjs` で確認できる (models/slimsam/ に配置が必要)。
