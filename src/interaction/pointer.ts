@@ -3,6 +3,7 @@
  * ツールごとの down / move / up ディスパッチ、パン、ズームホイール、多角形選択の確定。
  */
 import { floodMask, tintMask } from "../core/canvasUtils";
+import { aiSelect } from "../ai/aiSelectController";
 import { doc } from "../core/documentStore";
 import { history } from "../core/historyStack";
 import { filterPenFx } from "../core/filterEngine";
@@ -13,6 +14,7 @@ import { TOOLS } from "../core/toolDefs";
 import { screenToDoc, setZoom } from "../core/viewState";
 import { $ } from "../ui/dom";
 import { markDirty, toast } from "../ui/feedback";
+import { openAiModelPicker } from "../ui/panels";
 import { render, view } from "../rendering/renderer";
 import { PIN_HIT_RADIUS, warpSession } from "../puppet/warpSession";
 import {
@@ -155,6 +157,15 @@ function onPointerDown(e: PointerEvent): void {
       const m = floodMask(doc.compositeCanvas(), d.x, d.y, state.tolerance);
       selection.applySelection((g) => g.drawImage(m, 0, 0));
       toast(`類似色範囲を選択 (許容度 ${state.tolerance})`, "info");
+      break;
+    }
+    case "ai-select": {
+      // モデル未読み込みならファイル選択から開始する (読み込み後、再度クリックで被写体を選択)
+      if (!aiSelect.modelReady) {
+        openAiModelPicker();
+        break;
+      }
+      if (!aiSelect.isBusy) void aiSelect.selectAt(d.x, d.y, interaction.dragMods ?? state.selMode);
       break;
     }
     case "eyedropper": {

@@ -98,6 +98,7 @@
         <button class="toolbtn toolbtn--sel" data-tool="lasso"   title="投げ縄選択 (Q)"><i data-icon="lasso"></i></button>
         <button class="toolbtn toolbtn--sel" data-tool="polygon" title="多角形選択 (P) — ダブルクリック/Enter で確定"><i data-icon="pentagon"></i></button>
         <button class="toolbtn toolbtn--sel" data-tool="wand"    title="自動選択・魔法の杖 (W)"><i data-icon="wand"></i></button>
+        <button class="toolbtn toolbtn--sel" data-tool="ai-select" title="AI被写体選択 (A) — クリックした被写体を自動選択 · 初回のみモデル (.onnx) を読み込み"><i data-icon="ai-select"></i></button>
         <button class="toolbtn toolbtn--sel" data-tool="mask-pen" title="選択ペン (K) — ドラッグでマスクを直接描く"><i data-icon="pen"></i></button>
       </div>
       <span class="hrule"></span>
@@ -289,7 +290,25 @@
             <button class="btn btn--ghost" id="btn-warp-cancel" title="変形を破棄して元に戻す (Esc)"><i data-icon="x"></i>取消</button>
           </div>
 
-          <div class="ctrl" data-show="select-rect,lasso,polygon,wand,mask-pen">
+          <div class="ctrl" data-show="ai-select">
+            <div class="ctrl__row">
+              <label for="ctl-ai-threshold">検出しきい値</label>
+              <span class="ctrl__val mono" id="ctl-ai-threshold-val">50 %</span>
+            </div>
+            <input type="range" id="ctl-ai-threshold" min="5" max="95" step="1" value="50" />
+          </div>
+
+          <div class="ctrl" data-show="ai-select">
+            <div class="ctrl__label">AIモデル (U-2-Net .onnx)</div>
+            <div class="ai-model-status mono" id="ai-model-status">未読み込み</div>
+            <div class="sel-actions">
+              <button class="btn btn--ghost" id="btn-ai-model-load" title="u2net.onnx を選択して読み込み (IndexedDB にキャッシュされ、次回から自動で使われます)"><i data-icon="folder-open"></i>読み込む</button>
+              <button class="btn btn--ghost" id="btn-ai-model-remove" title="キャッシュしたAIモデルを削除"><i data-icon="trash-2"></i>削除</button>
+            </div>
+            <p class="fx-desc">rembg 等で配布される U-2-Net の u2net.onnx (約168MB / Apache-2.0) を使用します。初回のみ読み込み、以降はキャッシュから起動します。</p>
+          </div>
+
+          <div class="ctrl" data-show="select-rect,lasso,polygon,wand,mask-pen,ai-select">
             <div class="ctrl__label">選択合成モード <span class="ctrl__sub">Shift=追加 / Alt=除外</span></div>
             <div class="seg" role="group" aria-label="選択合成モード">
               <button class="seg__btn is-active" data-selmode="new" title="新規選択 — 既存をクリア">新規</button>
@@ -298,7 +317,7 @@
             </div>
           </div>
 
-          <div class="ctrl sel-actions" data-show="select-rect,lasso,polygon,wand,mask-pen">
+          <div class="ctrl sel-actions" data-show="select-rect,lasso,polygon,wand,mask-pen,ai-select">
             <button class="btn btn--ghost" id="btn-fill-selection" title="選択範囲を描画色で塗りつぶす (Alt+Delete)"><i data-icon="bucket"></i>塗りつぶし</button>
             <button class="btn btn--ghost" id="btn-deselect" title="選択を解除 (Ctrl+D)"><i data-icon="x"></i>解除</button>
           </div>
@@ -422,7 +441,7 @@
     <div class="statusbar__group">
       <span class="mono st-zoom" id="st-zoom">100%</span>
       <span class="vdiv"></span>
-      <span class="mono st-ver">JSPaint v0.2.15 · TypeScript</span>
+      <span class="mono st-ver">JSPaint v0.2.16 · TypeScript</span>
     </div>
   </footer>
 
@@ -461,6 +480,7 @@
 
   <!-- 画像読み込み用の隠し file input (スタンドアロンの「開く」ボタンから利用) -->
   <input type="file" id="file-open" class="sr-only" accept="image/*" />
+  <input type="file" id="file-ai-model" class="sr-only" accept=".onnx" />
 
   <script type="module" src="/src/main.ts"></script>
 </div>

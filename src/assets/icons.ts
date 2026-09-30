@@ -55,6 +55,8 @@ export const ICONS: Record<string, string> = {
   "clipboard-copy": P('<rect width="8" height="4" x="8" y="2" rx="1" ry="1"/>|M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4|M16 4h2a2 2 0 0 1 2 2v4|m21 14H11|m15 18l-4-4 4-4'),
   "clipboard-paste": P('M15 2H9a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1Z|M10 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h2|M20 8v10a2 2 0 0 1-2 2h-2|m18 14-2 2 2 2|m22 16h-6'),
   "image-plus": P('M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7|M16 5h6|M19 2v6|<circle cx="9" cy="9" r="2"/>|m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21'),
+  /* AI被写体選択 (lucide: scan-search) */
+  "ai-select": P('<path d="M3 7V5a2 2 0 0 1 2-2h2"/>|<path d="M17 3h2a2 2 0 0 1 2 2v2"/>|<path d="M21 17v2a2 2 0 0 1-2 2h-2"/>|<path d="M7 21H5a2 2 0 0 1-2-2v-2"/>|<circle cx="12" cy="12" r="3"/>|m16 16 1.5 1.5'),
 };
 
 /** <i data-icon="name"></i> をインラインSVGへ置換 */

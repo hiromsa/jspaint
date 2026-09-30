@@ -16,7 +16,7 @@ export type ToolId =
   | "brush" | "eraser" | "bucket"
   | "smudge" | "bloat" | "puppet-warp" | "dodge" | "burn" | "filter-pen"
   | "line" | "rect" | "ellipse"
-  | "select-rect" | "lasso" | "polygon" | "wand" | "mask-pen"
+  | "select-rect" | "lasso" | "polygon" | "wand" | "ai-select" | "mask-pen"
   | "eyedropper" | "pan";
 
 /** 選択合成モード: 新規 / 追加 (Shift) / 除外 (Alt) */

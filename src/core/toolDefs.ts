@@ -21,6 +21,7 @@ export const TOOLS: Record<ToolId, { label: string; key: string; guide: string; 
   lasso:       { label: "投げ縄選択",   key: "Q", guide: "ドラッグで囲んで選択", cursor: "crosshair" },
   polygon:     { label: "多角形選択",   key: "P", guide: "クリックで頂点追加 / ドラッグでフリーハンド · ダブルクリック / Enter で確定 · Esc で取消", cursor: "crosshair" },
   wand:        { label: "魔法の杖",     key: "W", guide: "クリックで類似色範囲を選択", cursor: "crosshair" },
+  "ai-select": { label: "AI被写体選択", key: "A", guide: "クリックした被写体をAIが自動選択 · Shift=追加 / Alt=除外 · 初回のみ u2net.onnx を読み込み (モデルはツールタブで管理)", cursor: "crosshair" },
   "mask-pen":  { label: "選択ペン",     key: "K", guide: "ドラッグで選択マスクを描く · Shift=追加 / Alt=除外", cursor: "none" },
   eyedropper:  { label: "スポイト",     key: "I", guide: "クリックで描画色を取得", cursor: "crosshair" },
   pan:         { label: "手のひら",     key: "H", guide: "ドラッグで表示移動 · ホイールでズーム", cursor: "grab" },
@@ -31,7 +32,7 @@ export const TOOL_ICON: Record<ToolId, string> = {
   brush: "brush", eraser: "eraser", bucket: "bucket",
   smudge: "smudge", bloat: "bloat", "puppet-warp": "pin", dodge: "sun", burn: "moon", "filter-pen": "sparkles",
   line: "line", rect: "square", ellipse: "circle",
-  "select-rect": "box-select", lasso: "lasso", polygon: "pentagon", wand: "wand", "mask-pen": "pen",
+  "select-rect": "box-select", lasso: "lasso", polygon: "pentagon", wand: "wand", "ai-select": "ai-select", "mask-pen": "pen",
   eyedropper: "pipette", pan: "hand",
 };
 
@@ -40,7 +41,7 @@ export const KEY_TOOL: Record<string, ToolId> = {
   b: "brush", e: "eraser", g: "bucket",
   s: "smudge", v: "bloat", t: "puppet-warp", d: "dodge", j: "burn", f: "filter-pen",
   l: "line", u: "rect", o: "ellipse",
-  m: "select-rect", q: "lasso", p: "polygon", w: "wand", k: "mask-pen",
+  m: "select-rect", q: "lasso", p: "polygon", w: "wand", a: "ai-select", k: "mask-pen",
   i: "eyedropper", h: "pan",
 };
 

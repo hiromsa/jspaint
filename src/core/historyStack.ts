@@ -25,6 +25,12 @@ const MAX_HISTORY = 40;
 export class HistoryStack {
   private readonly undoStack: Snap[] = [];
   private readonly redoStack: Snap[] = [];
+  /** ドキュメント内容が変わるたびに増加するリビジョン (AI saliency キャッシュの無効化に使用) */
+  revision = 0;
+
+  private touch(): void {
+    this.revision++;
+  }
 
   constructor(
     private readonly documentStore: DocumentStore,
@@ -41,6 +47,7 @@ export class HistoryStack {
 
   /** Undo 対象レイヤーのスナップショットを積む。未指定時は現在の編集対象レイヤーすべて */
   pushUndo(target?: Layer | Layer[]): void {
+    this.touch();
     const list = target ? (Array.isArray(target) ? target : [target]) : this.documentStore.editTargets();
     this.undoStack.push({
       layers: list.map((l) => ({ layerId: l.id, layer: clone(l.canvas) })),
@@ -54,6 +61,7 @@ export class HistoryStack {
 
   /** 編集をリセット (スタック全消去) */
   clear(): void {
+    this.touch();
     this.undoStack.length = 0;
     this.redoStack.length = 0;
     hooks.updateUndoButtons();
@@ -62,6 +70,7 @@ export class HistoryStack {
   undo(): void {
     const s = this.undoStack.pop();
     if (!s) return;
+    this.touch();
     this.redoStack.push({
       layers: this.snapCurrent(s.layers.map((x) => x.layerId)),
       sel: clone(this.selectionStore.mask),
@@ -73,6 +82,7 @@ export class HistoryStack {
   redo(): void {
     const s = this.redoStack.pop();
     if (!s) return;
+    this.touch();
     this.undoStack.push({
       layers: this.snapCurrent(s.layers.map((x) => x.layerId)),
       sel: clone(this.selectionStore.mask),

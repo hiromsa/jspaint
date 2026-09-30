@@ -1,7 +1,7 @@
 {
   "name": "jspaint",
   "private": true,
-  "version": "0.2.15",
+  "version": "0.2.16",
   "description": "JSPaint - Inpainting pre-processing paint tool for SD WebUI Forge (UI mock)",
   "type": "module",
   "scripts": {
@@ -16,12 +16,16 @@
     "test:maskdisplay": "esbuild scripts/verify-maskdisplay.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __createRequire } from 'module'; const require = __createRequire(import.meta.url);\" --outfile=%TEMP%\\verify-maskdisplay.mjs && node %TEMP%\\verify-maskdisplay.mjs",
     "test:toolsize": "esbuild scripts/verify-toolsize.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __createRequire } from 'module'; const require = __createRequire(import.meta.url);\" --outfile=%TEMP%\\verify-toolsize.mjs && node %TEMP%\\verify-toolsize.mjs",
     "test:tooltab": "esbuild scripts/verify-tooltab.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __createRequire } from 'module'; const require = __createRequire(import.meta.url);\" --outfile=%TEMP%\\verify-tooltab.mjs && node %TEMP%\\verify-tooltab.mjs",
-    "test:toolstack": "esbuild scripts/verify-toolstack.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __createRequire } from 'module'; const require = __createRequire(import.meta.url);\" --outfile=%TEMP%\\verify-toolstack.mjs && node %TEMP%\\verify-toolstack.mjs"
+    "test:toolstack": "esbuild scripts/verify-toolstack.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __createRequire } from 'module'; const require = __createRequire(import.meta.url);\" --outfile=%TEMP%\\verify-toolstack.mjs && node %TEMP%\\verify-toolstack.mjs",
+    "test:aisubject": "esbuild scripts/verify-aisubject.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __createRequire } from 'module'; const require = __createRequire(import.meta.url);\" --outfile=%TEMP%\\verify-aisubject.mjs && node %TEMP%\\verify-aisubject.mjs"
   },
   "devDependencies": {
     "puppeteer-core": "^25.12.0",
     "typescript": "^5.6.0",
     "vite": "^6.0.0",
     "vite-plugin-singlefile": "^2.1.0"
+  },
+  "dependencies": {
+    "onnxruntime-web": "^1.30.0"
   }
 }

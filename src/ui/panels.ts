@@ -3,6 +3,7 @@
  * ロジックは持たず、core のストアを呼び出して DOM を更新する。
  */
 import { mountIcons } from "../assets/icons";
+import { aiSelect } from "../ai/aiSelectController";
 import { doc } from "../core/documentStore";
 import { MAX_BRUSH_SIZE, restoreToolSize, setBrushSize, state } from "../core/editorState";
 import { selection } from "../core/selectionStore";
@@ -46,7 +47,29 @@ export function syncToolGuide(): void {
   $("#st-guide").textContent = TOOLS[state.tool].guide + selNote + multiNote;
 }
 
+/** AIモデル (.onnx) のファイル選択ダイアログを開く (初回読み込み時の入口) */
+export function openAiModelPicker(): void {
+  const input = $("#file-ai-model") as HTMLInputElement;
+  input.value = ""; // 同一ファイルの再選択でも change が発火するよう初期化
+  input.click();
+}
+
+/** AIモデルの状態表示とボタン有効性を同期する (aiSelect.onStatusChange からも呼ばれる) */
+export function syncAiModelStatus(): void {
+  const el = $("#ai-model-status");
+  if (!el) return;
+  const kind = aiSelect.stateKind;
+  el.textContent = kind === "loading" ? "モデル準備中…" : aiSelect.isBusy ? "解析中…" : kind === "ready" ? "利用可能 (キャッシュ済み)" : "未読み込み";
+  el.classList.toggle("is-ready", kind === "ready");
+  ($("#btn-ai-model-remove") as HTMLButtonElement).disabled = kind !== "ready";
+  ($("#btn-ai-model-load") as HTMLButtonElement).disabled = aiSelect.isBusy;
+  // 推論中はカーソルで待機を伝える (推論はメインスレッドで実行される)
+  stage.style.cursor = aiSelect.isBusy ? "wait" : TOOLS[state.tool].cursor;
+}
+
 export function setTool(tool: ToolId): void {
+  // AI被写体選択ツール: キャッシュ済みモデルがあればセッションを準備する (非同期・状態はパネルへ反映)
+  if (tool === "ai-select") void aiSelect.warmup();
   // パペットワープセッションの引継ぎ (puppet-warp に切り替えたら開始 / 離脱時は自動確定)
   warpSession.handleToolChange(tool);
   state.tool = tool;
@@ -211,6 +234,23 @@ export function bindControls(): void {
   // 選択範囲の塗りつぶし / 解除
   $("#btn-fill-selection").addEventListener("click", fillSelection);
   $("#btn-deselect").addEventListener("click", deselect);
+
+  // AI被写体選択 (しきい値 / モデルの読み込み・削除)
+  aiSelect.onStatusChange = syncAiModelStatus;
+  syncAiModelStatus();
+  const aiThreshold = $("#ctl-ai-threshold") as HTMLInputElement;
+  aiThreshold.addEventListener("input", (e) => {
+    state.aiThreshold = Number((e.target as HTMLInputElement).value);
+    $("#ctl-ai-threshold-val").textContent = `${state.aiThreshold} %`;
+    paintRangeFill(e.target as HTMLInputElement);
+  });
+  paintRangeFill(aiThreshold);
+  $("#btn-ai-model-load").addEventListener("click", openAiModelPicker);
+  $("#btn-ai-model-remove").addEventListener("click", () => void aiSelect.forgetModel());
+  ($("#file-ai-model") as HTMLInputElement).addEventListener("change", (e) => {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (file) void aiSelect.loadModelFile(file);
+  });
 
   // カラー
   $("#swatch-fg").addEventListener("click", () => ($("#color-input") as HTMLInputElement).click());

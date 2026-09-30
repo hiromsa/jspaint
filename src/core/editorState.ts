@@ -80,6 +80,8 @@ export const state = {
   opacity: 100,
   fillShape: true,
   tolerance: 25,
+  /** AI被写体選択の検出しきい値 (%)。saliency map の min-max 正規化値と比較する */
+  aiThreshold: 50,
   selMode: "new" as SelMode,
   /** 膨張ブラシの効果方向: 1 = 膨張 / -1 = 収縮 (Alt で一時反転) */
   bloatDir: 1 as 1 | -1,
