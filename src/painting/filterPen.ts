@@ -6,7 +6,7 @@
  */
 import { clone, createCanvas } from "../core/canvasUtils";
 import { doc } from "../core/documentStore";
-import { filterPenFx } from "../core/filterEngine";
+import { filterPenFx, FilterSettings } from "../core/filterEngine";
 import { selection } from "../core/selectionStore";
 import { state } from "../core/editorState";
 import { drawLineSeg, ensureStrokeTmp, getStrokeTmp, strokeTmpCtx } from "./stroke";
@@ -49,7 +49,9 @@ export function applyFilterPenSegment(from: Pt, to: Pt): void {
   if (!targets.length) return;
   // ぼかしのはみ出し分 (blur radius) も bbox に含める
   const blurPad = filterPenFx.on.blur && filterPenFx.blur > 0 ? filterPenFx.blur : 0;
-  const pad = state.brushSize / 2 + 2 + blurPad;
+  // シャープのぼかし参照が広い場合もその分はみ出しに含める (参照切れの防止)
+  const sharpenPad = filterPenFx.on.sharpen && filterPenFx.sharpen > 0 ? FilterSettings.SHARPEN_RADIUS_MAX : 0;
+  const pad = state.brushSize / 2 + 2 + blurPad + sharpenPad;
   const bx = Math.max(0, Math.floor(Math.min(from.x, to.x) - pad));
   const by = Math.max(0, Math.floor(Math.min(from.y, to.y) - pad));
   const br = Math.min(doc.width, Math.ceil(Math.max(from.x, to.x) + pad));
@@ -74,7 +76,8 @@ export function applyFilterPenSegment(from: Pt, to: Pt): void {
     const base = filterPenBase.get(l.id);
     if (!base) continue;
     // ソースを bbox で切り抜き、シャープを事前適用する (CSS filter にシャープは無いため)。
-    // pad にシャープ半径 (1px) 分のはみ出しを含めてあるため、bbox 端での参照切れは影響しない
+    // pad にぼかし参照半径 (最大 SHARPEN_RADIUS_MAX) 分のはみ出しを含めてあるため、
+    // bbox 端での参照切れはペンマスクの外側に限られ、焼き込み結果には影響しない
     const crop = createCanvas(bw, bh);
     crop.getContext("2d")!.drawImage(base, bx, by, bw, bh, 0, 0, bw, bh);
     const source = filterPenFx.applySharpen(crop);

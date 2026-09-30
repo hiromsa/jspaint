@@ -309,6 +309,13 @@ async function main(): Promise<void> {
       const diffPreview = maxColorDiff(fullBase, await readPixels(EDGE_R));
       ok("フィルタータブ: シャープのプレビューが画像全体 (未ペン範囲) のエッジを強調する", diffPreview > 8, `diff=${diffPreview}`);
 
+      // 強度を下げると効果も弱まる (スライダー全域が有効)
+      await setFx(p2, "image", "sharpen", true, 20);
+      await new Promise((r) => setTimeout(r, 100));
+      const diffWeak = maxColorDiff(fullBase, await readPixels(EDGE_R));
+      console.log(`  info  シャーププレビューのエッジ変化量: 強度100%=${diffPreview} / 20%=${diffWeak}`);
+      ok("フィルタータブ: 強度を下げるとシャープの効果も弱まる", diffWeak < diffPreview - 5, `weak=${diffWeak} strong=${diffPreview}`);
+
       await setFx(p2, "image", "sharpen", false);
       await new Promise((r) => setTimeout(r, 100));
       const diffOff = maxColorDiff(fullBase, await readPixels(EDGE_R));

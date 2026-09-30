@@ -61,8 +61,12 @@ export class FilterSettings {
     this.hue = 0;
   }
 
-  /** シャープ (アンシャープマスク) のぼかし参照半径 (px) */
-  private static readonly SHARPEN_RADIUS = 1;
+  /** シャープ (アンシャープマスク) のぼかし参照半径 (px) の下限 (強度 0%) */
+  private static readonly SHARPEN_RADIUS_MIN = 1;
+  /** ぼかし参照半径の上限 (px・強度 100%)。フィルターペンの bbox 余白の算出にも使う */
+  static readonly SHARPEN_RADIUS_MAX = 2.5;
+  /** 強度 100% でのシャープの強さ (アンシャープマスクの amount) */
+  private static readonly SHARPEN_MAX_AMOUNT = 2;
 
   /**
    * シャープ (アンシャープマスク) を適用した canvas を返す。
@@ -78,10 +82,16 @@ export class FilterSettings {
     const h = source.height;
     if (!w || !h) return source;
 
+    const ratio = this.sharpen / 100;
+    // 強度に比例してぼかし参照を広げ、差分の強さも増やす
+    // (低強度 = ほんのり細かく / 高強度 = はっきりと大胆に)
+    const radius = FilterSettings.SHARPEN_RADIUS_MIN + (FilterSettings.SHARPEN_RADIUS_MAX - FilterSettings.SHARPEN_RADIUS_MIN) * ratio;
+    const amount = ratio * FilterSettings.SHARPEN_MAX_AMOUNT;
+
     // ぼかし参照画像 (GPU 高速な CSS blur を利用)
     const blurred = createCanvas(w, h);
     const bg = blurred.getContext("2d")!;
-    bg.filter = `blur(${FilterSettings.SHARPEN_RADIUS}px)`;
+    bg.filter = `blur(${radius}px)`;
     bg.drawImage(source, 0, 0);
     bg.filter = "none";
 
@@ -90,7 +100,6 @@ export class FilterSettings {
     const ref = bg.getImageData(0, 0, w, h);
     const s = src.data;
     const r = ref.data;
-    const amount = this.sharpen / 100;
     for (let i = 0; i < s.length; i += 4) {
       const alpha = s[i + 3];
       if (alpha === 0) continue; // 完全透明ピクセルは変化させない
