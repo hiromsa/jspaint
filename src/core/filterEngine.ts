@@ -1,6 +1,7 @@
 /**
  * core/filterEngine.ts — フィルター設定の保持と適用
- * - FilterSettings: フィルターパラメータの保持と効果の生成 (CSS filter 文字列 / ノイズ)。
+ * - FilterSettings: フィルターパラメータの保持と効果の生成
+ *   (CSS filter 文字列 / ノイズ / シャープ)。
  *   全体フィルター (FilterEngine) とフィルターペン専用設定 (filterPenFx) で共用する。
  * - FilterEngine: 全体フィルター。編集対象レイヤーへのプレビュー表示と確定 (ベイク) を担う。
  *   適用先は「編集対象レイヤー」(アクティブ + Ctrl+クリックで追加した複数レイヤー)。
@@ -14,8 +15,15 @@ import { selection } from "./selectionStore";
 import { createCanvas } from "./canvasUtils";
 import type { Layer } from "./types";
 
+/** 0〜255 へクランプする (シャープ計算の加算オーバーフロー対策) */
+function clampByte(v: number): number {
+  return v < 0 ? 0 : v > 255 ? 255 : v;
+}
+
 export class FilterSettings {
   blur = 0;
+  /** シャープの強度 (0〜100%)。CSS filter に存在しないため applySharpen() で自前適用する */
+  sharpen = 0;
   noise = 0;
   /** ノイズの種類: "color" = RGB独立ランダム / "gray" = 明るさのみのグレイン */
   noiseMode: "color" | "gray" = "color";
@@ -23,9 +31,9 @@ export class FilterSettings {
   contrast = 100;
   saturate = 100;
   hue = 0;
-  on: Record<string, boolean> = { blur: false, noise: false, brightness: false, contrast: false, saturate: false, hue: false };
+  on: Record<string, boolean> = { blur: false, sharpen: false, noise: false, brightness: false, contrast: false, saturate: false, hue: false };
 
-  /** 適用中のフィルターを CSS filter 文字列として生成 */
+  /** 適用中のフィルターを CSS filter 文字列として生成 (シャープは自前実装のため含まれない) */
   filterString(): string {
     const parts: string[] = [];
     if (this.on.blur && this.blur > 0) parts.push(`blur(${this.blur}px)`);
@@ -44,12 +52,65 @@ export class FilterSettings {
   resetValues(): void {
     Object.keys(this.on).forEach((k) => (this.on[k] = false));
     this.blur = 0;
+    this.sharpen = 0;
     this.noise = 0;
     this.noiseMode = "color";
     this.brightness = 100;
     this.contrast = 100;
     this.saturate = 100;
     this.hue = 0;
+  }
+
+  /** シャープ (アンシャープマスク) のぼかし参照半径 (px) */
+  private static readonly SHARPEN_RADIUS = 1;
+
+  /**
+   * シャープ (アンシャープマスク) を適用した canvas を返す。
+   * 「出力 = 元画像 + 強度 × (元画像 − ぼかし参照)」を premultiply 空間で計算し、
+   * エッジのコントラストを強調する。CSS filter にシャープは存在しないため自前実装で、
+   * layerPreview / bake / フィルターペンはここで得た canvas をソースとして使う。
+   * アルファは変化させず、半透明エッジの色ズレも premultiply 計算で回避する。
+   * シャープ無効時は source をそのまま返す (呼び出し側に分岐を持たせない)。
+   */
+  applySharpen(source: HTMLCanvasElement): HTMLCanvasElement {
+    if (!this.on.sharpen || this.sharpen <= 0) return source;
+    const w = source.width;
+    const h = source.height;
+    if (!w || !h) return source;
+
+    // ぼかし参照画像 (GPU 高速な CSS blur を利用)
+    const blurred = createCanvas(w, h);
+    const bg = blurred.getContext("2d")!;
+    bg.filter = `blur(${FilterSettings.SHARPEN_RADIUS}px)`;
+    bg.drawImage(source, 0, 0);
+    bg.filter = "none";
+
+    // 元画像へ上書き書き込みしつつ差分を加算する
+    const src = source.getContext("2d")!.getImageData(0, 0, w, h);
+    const ref = bg.getImageData(0, 0, w, h);
+    const s = src.data;
+    const r = ref.data;
+    const amount = this.sharpen / 100;
+    for (let i = 0; i < s.length; i += 4) {
+      const alpha = s[i + 3];
+      if (alpha === 0) continue; // 完全透明ピクセルは変化させない
+      const af = alpha / 255;
+      const afRef = r[i + 3] / 255;
+      // premultiply した値で差分を取り、加算後に unpremultiply して戻す
+      const sr = s[i] * af;
+      const sg = s[i + 1] * af;
+      const sb = s[i + 2] * af;
+      const rr = r[i] * afRef;
+      const rg = r[i + 1] * afRef;
+      const rb = r[i + 2] * afRef;
+      s[i] = clampByte((sr + amount * (sr - rr)) / af);
+      s[i + 1] = clampByte((sg + amount * (sg - rg)) / af);
+      s[i + 2] = clampByte((sb + amount * (sb - rb)) / af);
+    }
+
+    const out = createCanvas(w, h);
+    out.getContext("2d")!.putImageData(src, 0, 0);
+    return out;
   }
 
   /** ノイズ(グレイン) — シード固定の決定論的パターンをキャッシュして再利用 (カラー / グレー) */
@@ -117,11 +178,13 @@ export class FilterEngine extends FilterSettings {
     if (!this.filtersActive()) return null;
     if (l.locked || !doc.editTargets().includes(l)) return null;
 
+    // シャープは CSS filter に無いため、ソースへ事前適用した canvas を描画に使う
+    const source = this.applySharpen(l.canvas);
     const g = this.ensureTmp();
     g.globalCompositeOperation = "source-over";
     g.clearRect(0, 0, doc.width, doc.height);
     g.filter = this.filterString();
-    g.drawImage(l.canvas, 0, 0);
+    g.drawImage(source, 0, 0);
     g.filter = "none";
     if (this.on.noise && this.noise > 0) this.drawNoise(g);
     // 選択範囲の外側を「フィルターなし」で上書き (範囲内のみ適用)
@@ -129,7 +192,7 @@ export class FilterEngine extends FilterSettings {
       const g2 = this.ensureTmp2();
       g2.globalCompositeOperation = "source-over";
       g2.clearRect(0, 0, doc.width, doc.height);
-      g2.drawImage(l.canvas, 0, 0);
+      g2.drawImage(source, 0, 0);
       g2.globalCompositeOperation = "destination-out";
       g2.drawImage(selection.mask, 0, 0);
       g2.globalCompositeOperation = "source-over";
@@ -152,11 +215,12 @@ export class FilterEngine extends FilterSettings {
     history.pushUndo(targets);
 
     for (const base of targets) {
-      // 1) フィルター適用済み画像を作る
+      // 1) フィルター適用済み画像を作る (シャープはソースへ事前適用)
+      const source = this.applySharpen(base.canvas);
       const filtered = createCanvas(doc.width, doc.height);
       const fg = filtered.getContext("2d")!;
       fg.filter = this.filterString();
-      fg.drawImage(base.canvas, 0, 0);
+      fg.drawImage(source, 0, 0);
       fg.filter = "none";
       if (this.on.noise && this.noise > 0) this.drawNoise(fg);
 

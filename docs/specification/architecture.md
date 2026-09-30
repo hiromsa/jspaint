@@ -34,9 +34,11 @@ src/
                      resetDocument: 読み込み直後の状態へ戻す)
     selectionStore.ts 選択マスク・Marching Ants の管理 (selection) ※ resizeTo でドキュメント実寸に追従
     historyStack.ts  Undo / Redo (スナップショット方式・40ステップ) (history)
-    filterEngine.ts  フィルター設定の保持と適用。基底クラス FilterSettings (パラメータ保持 + CSS filter 文字列生成 + ノイズ生成) を
-                     全体フィルター FilterEngine (**編集対象レイヤーへのプレビュー layerPreview・ベイク**, filters) と
-                     フィルターペン専用設定 filterPenFx で共用
+    filterEngine.ts  フィルター設定の保持と適用。基底クラス FilterSettings (パラメータ保持 + CSS filter 文字列生成 + ノイズ生成
+                     + シャープ applySharpen) を全体フィルター FilterEngine (**編集対象レイヤーへのプレビュー layerPreview・ベイク**,
+                     filters) とフィルターペン専用設定 filterPenFx で共用
+                     ※ シャープは CSS filter に存在しないためアンシャープマスク (blur 参照との差分加算・premultiply 計算) を自前実装し、
+                       プレビュー / ベイク / フィルターペンは applySharpen 済み canvas をソースに使う
                      ※ onDocResized でノイズキャッシュ (実寸依存) を無効化
     selectionOps.ts  選択範囲への編集操作 (全選択 / 塗りつぶし / 消去 / 解除)
     viewState.ts     ビューポート・ズーム / パン・screen⇔doc 変換 (viewport)
@@ -195,6 +197,7 @@ pointerup   → 後始末 → render()
 - `npm run test:imageio` — 画像入出力とホストモードをヘッドレス Chrome / Edge で E2E 検証 (27 ケース相当)。
   - 事前に `npm run build` が必要。puppeteer-core (devDependencies) を使用し、
     インストール済みブラウザの実行ファイルを自動検出する (追加ダウンロード不要)。
-- `npm run test:filterpen` — フィルターペン専用設定 (ツールタブ) の E2E 検証 (10 ケース相当)。
+- `npm run test:filterpen` — フィルターペン専用設定 (ツールタブ) とシャープフィルターの E2E 検証 (29 ケース相当)。
   フィルタータブとの独立性 / ペン有効化で画像全体が変わらないこと / なぞった範囲のみ焼き込まれること /
-  全体フィルターの従来動作 (プレビュー / 非破壊) / 無効時の案内トーストを検証する。
+  全体フィルターの従来動作 (プレビュー / 非破壊) / 無効時の案内トースト /
+  シャープ (ペンの範囲焼き込み / 全体プレビュー・非破壊 / ベイクと設定リセット) を検証する。

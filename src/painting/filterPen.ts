@@ -4,7 +4,7 @@
  * ペンでなぞった範囲のピクセルへ直接適用する。
  * 1ストローク内は開始時の画像を基準にするため、重ね塗りしてもフィルターが二重に効かない。
  */
-import { clone } from "../core/canvasUtils";
+import { clone, createCanvas } from "../core/canvasUtils";
 import { doc } from "../core/documentStore";
 import { filterPenFx } from "../core/filterEngine";
 import { selection } from "../core/selectionStore";
@@ -73,12 +73,17 @@ export function applyFilterPenSegment(from: Pt, to: Pt): void {
   for (const l of targets) {
     const base = filterPenBase.get(l.id);
     if (!base) continue;
+    // ソースを bbox で切り抜き、シャープを事前適用する (CSS filter にシャープは無いため)。
+    // pad にシャープ半径 (1px) 分のはみ出しを含めてあるため、bbox 端での参照切れは影響しない
+    const crop = createCanvas(bw, bh);
+    crop.getContext("2d")!.drawImage(base, bx, by, bw, bh, 0, 0, bw, bh);
+    const source = filterPenFx.applySharpen(crop);
     tg.save();
     tg.translate(-bx, -by);
     tg.globalCompositeOperation = "source-over";
     tg.clearRect(bx, by, bw, bh);
     tg.filter = filterPenFx.filterString();
-    tg.drawImage(base, 0, 0);
+    tg.drawImage(source, bx, by);
     tg.filter = "none";
     if (filterPenFx.on.noise && filterPenFx.noise > 0) filterPenFx.drawNoise(tg);
     tg.globalCompositeOperation = "destination-in";

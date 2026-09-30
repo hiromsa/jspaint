@@ -12,6 +12,7 @@ import { render } from "../rendering/renderer";
 
 const FX_FORMAT: Record<string, (v: number) => string> = {
   blur: (v) => `${v.toFixed(1)} px`,
+  sharpen: (v) => `${Math.round(v)} %`,
   noise: (v) => `${Math.round(v)} %`,
   brightness: (v) => `${Math.round(v)} %`,
   contrast: (v) => `${Math.round(v)} %`,

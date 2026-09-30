@@ -208,6 +208,15 @@
               <span class="fx__val mono" data-fx-val="blur">0.0 px</span>
             </div>
 
+            <div class="fx" data-fx="sharpen">
+              <div class="fx__row">
+                <span class="fx__name">シャープ</span>
+                <label class="switch"><input type="checkbox" data-fx-on="sharpen" /><span class="switch__track"></span></label>
+              </div>
+              <input type="range" data-fx-range="sharpen" min="0" max="100" step="1" value="0" />
+              <span class="fx__val mono" data-fx-val="sharpen">0 %</span>
+            </div>
+
             <div class="fx" data-fx="noise">
               <div class="fx__row">
                 <span class="fx__name">ノイズ</span>
@@ -310,6 +319,15 @@
             </div>
             <input type="range" data-fx-range="blur" min="0" max="10" step="0.5" value="0" />
             <span class="fx__val mono" data-fx-val="blur">0.0 px</span>
+          </div>
+
+          <div class="fx" data-fx="sharpen">
+            <div class="fx__row">
+              <span class="fx__name">シャープ</span>
+              <label class="switch"><input type="checkbox" data-fx-on="sharpen" /><span class="switch__track"></span></label>
+            </div>
+            <input type="range" data-fx-range="sharpen" min="0" max="100" step="1" value="0" />
+            <span class="fx__val mono" data-fx-val="sharpen">0 %</span>
           </div>
 
           <div class="fx" data-fx="noise">

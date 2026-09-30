@@ -244,6 +244,88 @@ async function main(): Promise<void> {
       });
       ok(`${tool} 選択時に無関係なボタン (確定/取消/塗りつぶし/解除) が表示されない`, stray.length === 0, `stray=${stray.join(",")}`);
     }
+
+    /* --- 8) シャープフィルター (ペン焼き込み / フィルタータブのプレビューとベイク) --- */
+    // 新しいページで検証する (前セクションの状態に依存しない)
+    {
+      const p2 = await browser.newPage();
+      p2.on("console", (msg) => console.log(`  [browser] ${msg.text()}`));
+      await p2.setViewport({ width: 1280, height: 800 });
+      await p2.goto(`${fileUrl}?mode=standalone`);
+      await p2.waitForSelector("#layer-list li");
+      await new Promise((r) => setTimeout(r, 300));
+
+      // 検証用の人工的なエッジ (水平線) をブラシで描く (既定色 #2563eb はデモ画像と高コントラスト)
+      const b2 = (await (await p2.$("#view")).boundingBox())!;
+      const cx2 = b2.x + b2.width / 2;
+      const cy2 = b2.y + b2.height / 2;
+      await p2.click('[data-tool="brush"]');
+      await new Promise((r) => setTimeout(r, 120));
+      await p2.mouse.move(cx2 - 120, cy2);
+      await p2.mouse.down();
+      await p2.mouse.move(cx2 + 120, cy2, { steps: 12 });
+      await p2.mouse.up();
+      await new Promise((r) => setTimeout(r, 150));
+
+      // 変化を読む点: 線の縁 (ブラシ 24px のエッジ帯 = 中心から ±9〜11px) を左半分 / 右半分で
+      const EDGE_L: [number, number][] = [[-80, 9], [-80, 11], [-80, -9], [-80, -11]];
+      const EDGE_R: [number, number][] = [[80, 9], [80, 11], [80, -9], [80, -11]];
+      const readPixels = async (pts: [number, number][]): Promise<[number, number, number][]> => {
+        const out: [number, number, number][] = [];
+        for (const [dx, dy] of pts) out.push(await viewPixel(p2, dx, dy));
+        return out;
+      };
+      const maxColorDiff = (a: [number, number, number][], b: [number, number, number][]): number =>
+        Math.max(...a.map((v, i) => colorDiff(v, b[i])));
+
+      const hasFxUI = (scope: string): Promise<boolean> =>
+        p2.evaluate((scope) => {
+          const fx = document.querySelector(`[data-fx-scope="${scope}"] .fx[data-fx="sharpen"]`);
+          return !!(fx && fx.querySelector('input[data-fx-on="sharpen"]') && fx.querySelector('input[data-fx-range="sharpen"]'));
+        }, scope);
+      ok("ツールタブ (フィルター効果) にシャープの UI がある", await hasFxUI("pen"));
+      ok("フィルタータブにシャープの UI がある", await hasFxUI("image"));
+
+      // フィルターペン: 左半分の線だけなぞってシャープを焼き込む (右半分は焼かない)
+      await p2.click('[data-tool="filter-pen"]');
+      await new Promise((r) => setTimeout(r, 150));
+      const penBaseL = await readPixels(EDGE_L);
+      const penBaseR = await readPixels(EDGE_R);
+      await setFx(p2, "pen", "sharpen", true, 100);
+      await p2.mouse.move(cx2 - 100, cy2);
+      await p2.mouse.down();
+      await p2.mouse.move(cx2, cy2, { steps: 10 });
+      await p2.mouse.up();
+      await new Promise((r) => setTimeout(r, 150));
+      const diffL = maxColorDiff(penBaseL, await readPixels(EDGE_L));
+      const diffR = maxColorDiff(penBaseR, await readPixels(EDGE_R));
+      ok("フィルターペン: シャープがなぞった範囲のエッジを強調する", diffL > 8, `diff=${diffL}`);
+      ok("フィルターペン: シャープはなぞっていない範囲に及ばない (範囲限定)", diffR < 6, `diff=${diffR}`);
+
+      // フィルタータブ (全体): シャープ ON でプレビュー、OFF で戻る (非破壊)、ベイクで焼き込み
+      const fullBase = await readPixels(EDGE_R); // 右半分のエッジ (ペンの影響外)
+      await setFx(p2, "image", "sharpen", true, 100);
+      await new Promise((r) => setTimeout(r, 100));
+      const diffPreview = maxColorDiff(fullBase, await readPixels(EDGE_R));
+      ok("フィルタータブ: シャープのプレビューが画像全体 (未ペン範囲) のエッジを強調する", diffPreview > 8, `diff=${diffPreview}`);
+
+      await setFx(p2, "image", "sharpen", false);
+      await new Promise((r) => setTimeout(r, 100));
+      const diffOff = maxColorDiff(fullBase, await readPixels(EDGE_R));
+      ok("フィルタータブ: シャープを OFF にするとプレビューは元に戻る (非破壊)", diffOff < 6, `diff=${diffOff}`);
+
+      await setFx(p2, "image", "sharpen", true, 100);
+      // 確定(ベイク)ボタンはフィルタータブ内にあるため、タブを切り替えてから押す
+      await p2.click('button.tab[data-tab="filter"]');
+      await new Promise((r) => setTimeout(r, 150));
+      await p2.click("#btn-filter-apply");
+      await new Promise((r) => setTimeout(r, 200));
+      const diffBaked = maxColorDiff(fullBase, await readPixels(EDGE_R));
+      ok("フィルタータブ: 確定(ベイク)でシャープがレイヤーに焼き込まれる", diffBaked > 8, `diff=${diffBaked}`);
+      ok("フィルタータブ: ベイク後にシャープの設定はリセットされる", !(await isFxOn(p2, "image", "sharpen")));
+
+      await p2.close();
+    }
   } finally {
     await browser.close();
   }
