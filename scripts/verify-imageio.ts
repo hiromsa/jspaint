@@ -65,6 +65,21 @@ async function injectImage(page: Page, mode: "paste" | "drop", w: number, h: num
   }, mode, w, h, name);
 }
 
+/** navigator.clipboard.read をスタブ化し、任意サイズ・色の画像を OS クリップボードに見せる */
+async function stubOsClipboard(page: Page, w: number, h: number, color: string): Promise<void> {
+  await page.evaluate(async (w, h, color) => {
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    const g = c.getContext("2d")!;
+    g.fillStyle = color;
+    g.fillRect(0, 0, w, h);
+    const blob: Blob = await new Promise((res) => c.toBlob((b) => res(b!), "image/png"));
+    const stub = { read: async () => [{ types: ["image/png"], getType: async () => blob }] };
+    Object.defineProperty(navigator, "clipboard", { value: stub, configurable: true });
+  }, w, h, color);
+}
+
 /** ドキュメント情報表示が指定サイズになるまで待ち、内容を取得する */
 async function waitDocInfo(page: Page, dim: string): Promise<{ name: string; dim: string; status: string }> {
   await page.waitForFunction(
@@ -133,8 +148,8 @@ async function main(): Promise<void> {
     await page.waitForSelector("#layer-list li");
 
     ok("html[data-host-mode=standalone]", await page.evaluate(() => document.documentElement.dataset.hostMode === "standalone"));
-    ok("開く/保存/コピー/ペーストボタンが表示される", await page.evaluate(() =>
-      ["#btn-open", "#btn-save", "#btn-copy", "#btn-paste"].every((s) => (document.querySelector(s) as HTMLElement).offsetParent !== null),
+    ok("開く/保存/コピー/ペースト/新規画像ボタンが表示される", await page.evaluate(() =>
+      ["#btn-open", "#btn-save", "#btn-copy", "#btn-paste", "#btn-paste-new"].every((s) => (document.querySelector(s) as HTMLElement).offsetParent !== null),
     ));
     const init = await waitDocInfo(page, "640×640");
     ok("初期ドキュメント 640×640 / sample_photo.png", init.name === "sample_photo.png", `name=${init.name}`);
@@ -160,6 +175,23 @@ async function main(): Promise<void> {
     const replaced = await waitDocInfo(page, "512×384");
     ok("Ctrl+Shift+V でドキュメントが差し替わる", replaced.dim === "512×384", `dim=${replaced.dim}`);
     ok("差し替え後は元画像レイヤー1枚に戻る", (await layerCount(page)) === 1);
+
+    /* --- 3.5) 「クリップボードから新規画像」ボタン → 新規ドキュメントとして読み込み --- */
+    await stubOsClipboard(page, 400, 300, "#00ff00");
+    await page.click("#btn-paste-new");
+    const fromBtn = await waitDocInfo(page, "400×300");
+    ok("「クリップボードから新規画像」ボタンで新規ドキュメントを作成", fromBtn.dim === "400×300", `dim=${fromBtn.dim}`);
+    ok("新規ドキュメント名は clipboard.png", fromBtn.name === "clipboard.png", `name=${fromBtn.name}`);
+    ok("新規ドキュメントはレイヤー1枚で始まる", (await layerCount(page)) === 1);
+
+    /* --- 3.6) クリップボードに画像がない場合は案内トーストを出す --- */
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "clipboard", { value: { read: async () => [] }, configurable: true });
+    });
+    await page.click("#btn-paste-new");
+    await new Promise((res) => setTimeout(res, 250));
+    const noImgToast = await lastToast(page);
+    ok("クリップボードに画像がない場合は案内表示", noImgToast.includes("画像がありません"), `toast="${noImgToast}"`);
 
     /* --- 4) 内部コピー → 新規レイヤーとして貼り付け --- */
     await sendCtrlKey(page, "c");
@@ -213,8 +245,8 @@ async function main(): Promise<void> {
     ok("開く/保存ボタンは非表示", await page2.evaluate(() =>
       ["#btn-open", "#btn-save"].every((s) => getComputedStyle(document.querySelector(s) as HTMLElement).display === "none"),
     ));
-    ok("コピー/ペーストボタンは表示される", await page2.evaluate(() =>
-      ["#btn-copy", "#btn-paste"].every((s) => (document.querySelector(s) as HTMLElement).offsetParent !== null),
+    ok("コピー/ペースト/新規画像ボタンは表示される", await page2.evaluate(() =>
+      ["#btn-copy", "#btn-paste", "#btn-paste-new"].every((s) => (document.querySelector(s) as HTMLElement).offsetParent !== null),
     ));
 
     /* --- 10) embed でも Ctrl+V でレイヤー追加ができる --- */

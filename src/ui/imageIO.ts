@@ -2,7 +2,8 @@
  * ui/imageIO.ts — 画像の入出力 (開く / 保存 / クリップボード / ドラッグ&ドロップ / ペースト)
  *
  * 読み込みには2種類ある:
- *   - ドキュメント差し替え (「開く」/ ドロップ / Ctrl+Shift+V): 画像を元画像レイヤーとして新規ドキュメントを開く
+ *   - ドキュメント差し替え (「開く」/ ドロップ / Ctrl+Shift+V / 「クリップボードから新規画像」ボタン):
+ *     画像を元画像レイヤーとして新規ドキュメントを開く
  *   - 新規レイヤー貼り付け (Ctrl+V / 「クリップボードから新規作成」ボタン): 現在のドキュメントにレイヤー追加
  * 内部クリップボード (core/clipboard) にコピーがある場合は Ctrl+V でそれを優先してレイヤー化する。
  * ファイルを開く / 保存は standalone モード専用 (ui/hostMode.ts で UI を切り替え)。
@@ -88,8 +89,12 @@ async function readClipboardImage(): Promise<Blob | null> {
   return null;
 }
 
-/** 「クリップボードから新規作成」ボタン: OS クリップボードの画像を新規レイヤーとして貼り付ける */
-async function pasteFromOsClipboardAsLayer(): Promise<void> {
+/**
+ * 「クリップボードから新規作成」ボタン / 「クリップボードから新規画像」ボタン共通:
+ * OS クリップボードの画像を取り出して適用する
+ * (asDocument = true で新規ドキュメントとして読み込み / false で新規レイヤーとして貼り付け)
+ */
+async function pasteFromOsClipboard(asDocument: boolean): Promise<void> {
   try {
     const blob = await readClipboardImage();
     if (!blob) {
@@ -97,7 +102,8 @@ async function pasteFromOsClipboardAsLayer(): Promise<void> {
       return;
     }
     const image = await loadImageFromBlob(blob);
-    pasteImageAsLayer(image);
+    if (asDocument) applyImage(image, "clipboard.png");
+    else pasteImageAsLayer(image);
   } catch {
     toast("クリップボードを読み取れませんでした (権限が必要な場合があります)", "info");
   }
@@ -168,7 +174,8 @@ export function bindImageIO(): void {
   $("#btn-open").addEventListener("click", openFile);
   $("#btn-save").addEventListener("click", saveComposite);
   $("#btn-copy").addEventListener("click", () => void copyComposite());
-  $("#btn-paste").addEventListener("click", () => void pasteFromOsClipboardAsLayer());
+  $("#btn-paste").addEventListener("click", () => void pasteFromOsClipboard(false));
+  $("#btn-paste-new").addEventListener("click", () => void pasteFromOsClipboard(true));
 
   ($("#file-open") as HTMLInputElement).addEventListener("change", (e) => {
     const file = (e.target as HTMLInputElement).files?.[0];
