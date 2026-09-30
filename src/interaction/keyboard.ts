@@ -3,7 +3,7 @@
  * UI (パネル / モーダル) 側の操作は deps として受け取る (Step 4 で直接 import に置き換え)。
  */
 import { $ } from "../ui/dom";
-import { state } from "../core/editorState";
+import { setBrushSize, state } from "../core/editorState";
 import { hooks } from "../core/hooks";
 import { interaction } from "../core/interactionState";
 import { selection } from "../core/selectionStore";
@@ -72,8 +72,8 @@ function onKeyDown(e: KeyboardEvent): void {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (KEY_TOOL[k]) { setTool(KEY_TOOL[k]); return; }
   if (k === "x") { swapColors(); return; }
-  if (k === "[") { state.brushSize = Math.max(1, state.brushSize - Math.max(1, Math.round(state.brushSize * 0.15))); syncSlider(); return; }
-  if (k === "]") { state.brushSize = Math.min(200, state.brushSize + Math.max(1, Math.round(state.brushSize * 0.15))); syncSlider(); return; }
+  if (k === "[") { setBrushSize(state.brushSize - Math.max(1, Math.round(state.brushSize * 0.15))); syncSlider(); return; }
+  if (k === "]") { setBrushSize(state.brushSize + Math.max(1, Math.round(state.brushSize * 0.15))); syncSlider(); return; }
   if (e.key === "+" || e.key === "=") { setZoom(state.zoom * 1.25); return; }
   if (e.key === "-") { setZoom(state.zoom / 1.25); return; }
   if (e.key === "0") { setZoom(1); return; }

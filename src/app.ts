@@ -13,7 +13,7 @@
  */
 import { mountIcons } from "./assets/icons";
 import { createDemoImage } from "./assets/demo";
-import { state } from "./core/editorState";
+import { loadToolSizes, state } from "./core/editorState";
 import { doc } from "./core/documentStore";
 import { selection } from "./core/selectionStore";
 import { history } from "./core/historyStack";
@@ -70,6 +70,8 @@ export function startApp(): void {
 
   // core からの UI 更新は hooks 経由で行う (実装をここで差し込む)
   setHooks({ render, toast, markDirty, syncToolGuide, renderLayers, updateUndoButtons, syncFilterUI, syncZoomUI, syncDocInfo });
+  // localStorage のツール別サイズを setTool("brush") より前に復元する
+  loadToolSizes();
   doc.init(createDemoImage());
   // 起動直後 (デモ画像をそのまま編集するケース) も選択マスクを実寸へ合わせる。
   // resizeTo は画像読み込み (documentOps.applyBaseImage) 時にしか呼ばれないと、

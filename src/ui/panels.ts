@@ -4,7 +4,7 @@
  */
 import { mountIcons } from "../assets/icons";
 import { doc } from "../core/documentStore";
-import { state } from "../core/editorState";
+import { MAX_BRUSH_SIZE, restoreToolSize, setBrushSize, state } from "../core/editorState";
 import { selection } from "../core/selectionStore";
 import { PAINT_TOOLS, TOOLS, TOOL_ICON } from "../core/toolDefs";
 import type { SelMode, ToolId } from "../core/types";
@@ -50,6 +50,8 @@ export function setTool(tool: ToolId): void {
   // パペットワープセッションの引継ぎ (puppet-warp に切り替えたら開始 / 離脱時は自動確定)
   warpSession.handleToolChange(tool);
   state.tool = tool;
+  // ツール別サイズを復元 (サイズUIを持たないツールでは現在値を維持)
+  restoreToolSize(tool);
   $$(".toolbtn").forEach((b) => b.classList.toggle("is-active", b.dataset.tool === tool));
   const info = TOOLS[tool];
   $("#tool-title").textContent = info.label;
@@ -67,6 +69,8 @@ export function setTool(tool: ToolId): void {
     const list = (el.dataset.show ?? "").split(",");
     el.classList.toggle("is-hidden", !list.includes(tool));
   });
+  // 復元したツール別サイズをスライダー / クイックサイズ / プレビュー円へ反映
+  syncSlider();
   render();
 }
 
@@ -96,6 +100,8 @@ export function swapColors(): void {
 
 export function syncSlider(): void {
   const el = $("#ctl-size") as HTMLInputElement;
+  // スライダー上限は core の定数と同期させる (HTML 初期値の不整合を起動時に吸収)
+  el.max = String(MAX_BRUSH_SIZE);
   el.value = String(state.brushSize);
   paintRangeFill(el);
   $$(".chip[data-size]").forEach((c) =>
@@ -141,7 +147,7 @@ export function bindControls(): void {
 
   // サイズ / 不透明度 / 許容度
   ($("#ctl-size") as HTMLInputElement).addEventListener("input", (e) => {
-    state.brushSize = Number((e.target as HTMLInputElement).value);
+    setBrushSize(Number((e.target as HTMLInputElement).value));
     syncBrushPreview();
     $$(".chip[data-size]").forEach((c) => c.classList.toggle("is-active", Number((c as HTMLElement).dataset.size) === state.brushSize));
     render();
@@ -158,7 +164,7 @@ export function bindControls(): void {
   // クイックサイズ
   $$(".chip[data-size]").forEach((chip) =>
     chip.addEventListener("click", () => {
-      state.brushSize = Number((chip as HTMLElement).dataset.size);
+      setBrushSize(Number((chip as HTMLElement).dataset.size));
       ($("#ctl-size") as HTMLInputElement).value = String(state.brushSize);
       paintRangeFill($("#ctl-size") as HTMLInputElement);
       $$(".chip[data-size]").forEach((c) => c.classList.toggle("is-active", c === chip));

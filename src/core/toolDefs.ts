@@ -47,5 +47,9 @@ export const KEY_TOOL: Record<string, ToolId> = {
 /** 選択範囲の影響を受ける描画系ツール (選択中はその範囲内のみ描画) */
 export const PAINT_TOOLS: ToolId[] = ["brush", "eraser", "bucket", "smudge", "bloat", "dodge", "burn", "filter-pen", "line", "rect", "ellipse"];
 
+/** サイズスライダー (state.brushSize) を持つツール — ツール別サイズの記憶対象。
+ *  index.html のサイズ行 (data-show) と同じメンバーを保つこと */
+export const SIZE_TOOLS: ToolId[] = ["brush", "eraser", "line", "rect", "ellipse", "mask-pen", "smudge", "bloat", "dodge", "burn", "filter-pen"];
+
 /** 円形ブラシカーソルを表示するツール */
 export const CIRCLE_CURSOR_TOOLS: ToolId[] = ["brush", "eraser", "mask-pen", "smudge", "bloat", "dodge", "burn", "filter-pen"];
