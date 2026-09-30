@@ -32,6 +32,10 @@ class PuppetWarpSession {
   private readonly sources = new Map<number, HTMLCanvasElement>();
   private readonly previews = new Map<number, HTMLCanvasElement>();
   private nextPinId = 1;
+  /** 予約中のドラッグ用プレビュー更新 (rAF ハンドル。0 = なし) */
+  private previewRaf = 0;
+  /** プレビューが低品質 (ドラッグ中の高速転写) のままか */
+  private lowQualityPreview = false;
 
   /* ---------- セッションのライフサイクル ---------- */
 
@@ -66,6 +70,8 @@ class PuppetWarpSession {
   commit(): void {
     if (!this.active) return;
     if (this.hasDeformation()) {
+      // 低品質プレビューが残っていれば高品質で仕上げてから焼き込む
+      if (this.lowQualityPreview) this.refresh();
       const targets = doc.editTargets().filter((l) => this.sources.has(l.id));
       if (targets.length > 0) {
         history.pushUndo(targets);
@@ -149,13 +155,18 @@ class PuppetWarpSession {
     const pin = this.mesh?.pins.find((p) => p.id === this.dragPinId);
     if (!pin || pin.isPinned) return;
     pin.current = { x: pos.x, y: pos.y };
-    this.refresh();
-    hooks.render();
+    this.schedulePreview();
   }
 
-  /** ピンのドラッグを終了する */
+  /** ピンのドラッグを終了する (低品質プレビューを高品質で仕上げ直す) */
   endDrag(): void {
+    if (this.dragPinId == null) return;
     this.dragPinId = null;
+    this.cancelScheduledPreview();
+    if (this.lowQualityPreview) {
+      this.refresh();
+      hooks.render();
+    }
   }
 
   /** プレビュー中のレイヤー表示キャンバス (編集対象外 or セッション外は null) */
@@ -185,6 +196,7 @@ class PuppetWarpSession {
 
   /** メッシュを差し替えてセッションの状態を初期化する */
   private resetTo(mesh: PuppetMesh): void {
+    this.cancelScheduledPreview();
     this.mesh = mesh;
     this.sources.clear();
     this.previews.clear();
@@ -197,13 +209,16 @@ class PuppetWarpSession {
 
 
   /** ピンの現在位置から変形を再計算し、全レイヤーのプレビューを更新する */
-  private refresh(): void {
+  private refresh(quality: ImageSmoothingQuality = "high"): void {
     if (!this.mesh) return;
+    this.lowQualityPreview = quality !== "high";
     this.deformed = computeDeformedVertices(this.mesh);
     this.previews.clear();
     const hasSel = selection.hasSelection;
+    // まだピンが動いていなければ変形は恒等 → 重いメッシュ転写を省き元画像をそのまま使う
+    const isDeformed = this.hasDeformation();
     for (const [layerId, source] of this.sources) {
-      const warped = renderWarped(source, this.mesh, this.deformed);
+      const warped = isDeformed ? renderWarped(source, this.mesh, this.deformed, quality) : source;
       if (!hasSel) {
         this.previews.set(layerId, warped);
         continue;
@@ -233,7 +248,29 @@ class PuppetWarpSession {
     return false;
   }
 
+  /** ドラッグ中のプレビュー更新を 1 フレームに 1 回へ間引く (pointermove 高頻度対策) */
+  private schedulePreview(): void {
+    if (this.previewRaf) return;
+    this.previewRaf = requestAnimationFrame(() => {
+      this.previewRaf = 0;
+      // ドラッグが終わっていたら何もしない (endDrag で高品質に仕上げ直す)
+      if (!this.active || this.dragPinId == null) return;
+      // ドラッグ中は低品質補間で転写を軽くする (離した時に高品質で仕上げ直す)
+      this.refresh("low");
+      hooks.render();
+    });
+  }
+
+  /** 予約中のプレビュー更新を取り消す */
+  private cancelScheduledPreview(): void {
+    if (this.previewRaf) {
+      cancelAnimationFrame(this.previewRaf);
+      this.previewRaf = 0;
+    }
+  }
+
   private dispose(): void {
+    this.cancelScheduledPreview();
     this.active = false;
     this.mesh = null;
     this.deformed = [];
