@@ -60,6 +60,9 @@ TypeScript 実装の原型として、描画/選択/フィルター/エクスポ
 - 塗りつぶし (スキャンライン flood fill・許容度)
 - 選択: 矩形 / 投げ縄 / 多角形 (クリック=頂点追加・ドラッグ=フリーハンド) / 魔法の杖 (許容度)
 - 選択ペン (`K`): ドラッグでマスクを直接描画 (新規/追加/除外に連動)
+- **AI被写体選択 (`A`)**: クリックした被写体を U-2-Net 推論で自動選択。ランタイム (onnxruntime-web) は
+  単一HTMLへ同梱、モデル (u2net.onnx / Apache-2.0) は初回のみ読み込んで IndexedDB にキャッシュ
+  (詳細は [ai-subject-select.md](specification/ai-subject-select.md) / 実装は `src/ai/`)
 - スポイト、手のひら (`Space` 長押しパン)
 - レタッチ (指先 / 覆い焼き / 焼き込み): 編集対象レイヤーのピクセルに直接作用 (元画像専用ではなくアクティブレイヤーでも使用可)
 - フィルターペン (`F`): ツールタブの「フィルター効果」 (専用設定 `filterPenFx`) をペンでなぞった範囲に焼き込む (ストローク開始時の画像を基準にするため同一ストローク内で効果は一定。サイズ・適用の強さ・選択範囲限定・編集対象レイヤー複数適用・Undo対応)。**フィルタータブ (全体フィルター) とは独立**しており、ペン使用中も画像全体には影響しない
@@ -130,6 +133,7 @@ TypeScript 実装の原型として、描画/選択/フィルター/エクスポ
 | 27 | **ツール選択時の「ツール」タブ自動切替** — 右パネル (Properties) のタブを、ツールを選択したタイミングで自動的に「ツール」タブへ切り替える機能を追加。フィルター / レイヤータブ表示中にツールを選ぶ (ツールボタン click / ショートカットキー / 階層スタック) と選択したツールの設定が即座に表示される。タブ切替ロジックを `ui/panels.ts` の新関数 `activateTab()` に共通化し、`setTool()` から `activateTab("tool")` を呼ぶ形に統一 (タブの手動クリックも同じ関数経由・二重実装なし)。ツールタブ表示中の切替では変化なし (冪等)。検証: 新規 `npm run test:tooltab` (puppeteer-core E2E、15 ケース合格 — 初期状態 / キーボード・ボタン両入口の自動復帰 / 同一ツール再選択でも復帰 / ツールタブ中の切替でタブ維持 / 手動切替は従来どおり) + 既存 6 テスト (toolsize 22 / filterpen 30 / puppet 25 / maskdisplay 13 / imageio 27 / hostbridge 12) 全合格 + typecheck + build。docs 更新 (ui.md 2.3 / 本書) |
 | 28 | **「クリップボードから新規画像」ボタンを追加** — ヘッダーのペーストボタン (`#btn-paste` = 新規レイヤー貼り付け) の隣に、OS クリップボードの画像で**新規ドキュメントを作成**するボタン (`#btn-paste-new`, `image-plus` アイコン) を追加。`Ctrl+Shift+V` 相当 (ドキュメント差し替え・実寸追従・選択/履歴/フィルターリセット) をショートカットなしで実行できる。`ui/imageIO.ts` の OS クリップボード読み取りを「新規レイヤー / 新規ドキュメント」切替式の共通関数 `pasteFromOsClipboard(asDocument)` に一元化。ボタンは両モード (standalone / embed) で表示 (`Ctrl+Shift+V` が embed でも動作するため)。旧ペーストボタンの title 表記から「Ctrl+Shift+V で新規ドキュメント」を分離し、新ボタンへ案内。検証: `npm run test:imageio` に `navigator.clipboard.read` スタブを追加し 4 ケース拡張 (31 合格 — ボタンで新規ドキュメント作成 / clipboard.png 名 / レイヤー1枚 / 画像なし時の案内トースト + standalone・embed でのボタン表示) + typecheck + build。docs 更新 (ui.md 2.1・2.6.2 / 本書) |
 | 29 | **直線・矩形・円をツールスタック (階層ボタン) に集約** — ツール数増加に伴い、図形 3 ツール (直線 / 矩形 / 円) を覆い焼き / 焼き込みと同じ `.toolstack` (階層ボタン) 1 枠にまとめた。メインボタンは選択中ツールのアイコン / title に追従 (`syncToolStackDisplay` — 既存の汎用機構をそのまま利用し **JS 側の変更はなし**・グループ定義は index.html の `data-stack="line,rect,ellipse"` のみ)、▶ キャレット / メイン右クリックでメンバー一覧ポップを開閉、外側クリックで閉じる。ショートカット `L` / `U` / `O` は従来どおり有効で、切替時にメイン表示が追従する。サイズ行 (SIZE_TOOLS) 対象も従来どおり。検証: 新規 `npm run test:toolstack` (puppeteer-core E2E、19 ケース合格 — スタック存在 / 初期状態 / ポップ開閉 / ポップ選択・ショートカット切替とメイン追従 / 右クリック / 外側クリック / サイズ行表示 / 覆い焼き・焼き込みスタックの回帰) + 既存 7 テスト (toolsize 22 / tooltab 15 / filterpen 30 / imageio 31 / maskdisplay 13 / hostbridge 12 / puppet 25) 全合格 + typecheck + build。docs 更新 (ui.md 2.2 / README / 本書) |
+| 30 | **AI被写体選択 (`A`) を追加 — U-2-Net による自動範囲選択** — Affinity Photo の「被写体を選択」相当。クリックした位置を含む被写体を saliency map から自動抽出する。① **新設 `src/ai/`** — `ortRuntime.ts` (onnxruntime-web 1.30 の「wasm 外部渡し」ビルドを `#ort-module` エイリアスで解決し、ランタイム wasm 13.6MB + ローダー mjs を `?url` data URI で同梱 → 実行時に Blob URL 化して `wasmPaths` へ渡す。bundle 版は `new URL(...)` が Vite で多重インライン化され約3倍に膨張するため回避)、`modelStore.ts` (IndexedDB `jspaint.ai` にモデルをキャッシュ / 不可環境はメモリフォールバック)、`subjectMask.ts` (min-max 正規化 / しきい値化 / 4近傍連結成分ラベリングの pure 関数群)、`u2netSegmenter.ts` (320×320 推論 / 入出力名はセッションから動的取得)、`aiSelectController.ts` (モデルの warmup / 読込 / 削除、saliency キャッシュ = ドキュメントサイズ + `historyStack.revision`、成分選択→`applySelection` 統合)。② **モデルは同梱しない** — 初回クリックで `.onnx` 選択ダイアログ (rembg 配布の u2net.onnx 約168MB / Apache-2.0) → IndexedDB にキャッシュして次回から自動起動 (file:// でも永続化を E2E で実証)。③ **UI** — ツールボックスに追加 (アイコン scan-search) / ツールタブに検出しきい値 (5〜95% 既定50) とモデル管理 (状態表示・読み込む・削除) / 選択合成モード (新規/追加/除外) は既存機構に接続 / 推論中はカーソル wait。④ **検証** — 新規 `npm run test:aisubject` (Part 1: subjectMask 純関数の node 単体テスト / Part 2: スタブ ONNX — `make-stub-model.mjs` が protobuf を直書き生成する「チャンネル平均=saliency」最小モデル 145B、`ints` 属性は proto2 非packed で書く必要あり — による E2E。合計 19 ケース合格: 単一HTMLの単一性 / ステータス遷移 / 選択・追加・除外・しきい値 / **リロード後の IndexedDB 永続化** / モデル削除)。⑤ dist は **19.5MB の単一HTML** のまま (起動時間は従来どおり、ort は初回利用時まで読み込まない)。docs 更新 (ai-subject-select.md 新設 / ui.md 2.2・2.3・2.4・3 / architecture.md / README / 本書) |
 
 ## 次回候補 (Backlog)
 
@@ -141,3 +145,5 @@ TypeScript 実装の原型として、描画/選択/フィルター/エクスポ
 - Inpainting マスクレイヤーの複数指定 (現在は 1 枚のみ)
 - 親アプリ連携の拡張: 完了時のドキュメントリセット方針 / 複数レイヤーの受け渡しプロトコル
 - 読み込み画像の拡大/縮小・リサイズ UI (現在は実寸のまま読み込む)
+- AI被写体選択の拡張: WebGPU EP 対応 (`ort-wasm-simd-threaded.jsep.wasm` をユーザー読み込みで追加し GPU 推論) /
+  モデル選択肢の追加 (u2netp 軽量版 / ISNet 高精度版) / 推論の Web Worker 移行 (UI ブロック除去)
