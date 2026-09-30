@@ -56,7 +56,8 @@ function onKeyDown(e: KeyboardEvent): void {
     if (!($("#modal-export") as HTMLElement).hidden) { closeExport(); return; }
     // AIモデルセットアップモーダル (ダウンロード元の案内)
     if (!($("#modal-ai-model") as HTMLElement).hidden) { closeAiModelSetup(); return; }
-    // SAMポイントのクリア (選択範囲は維持)
+    // SAM囲み選択のドラッグ中断 → ポイントクリア (選択範囲は維持)
+    if (samSelect.isDragging) { samSelect.cancelDrag(); return; }
     if (samSelect.hasPoints) { samSelect.resetPoints(true); return; }
     // パペットワープセッションの取消 (進行中の変形を破棄)
     if (warpSession.active) { warpSession.cancel(); return; }

@@ -165,8 +165,8 @@ function onPointerDown(e: PointerEvent): void {
         openAiModelSetup();
         break;
       }
-      // クリック = 対象ポイント / Alt+クリック = 除外ポイント。ポイント全体からマスクを再構成する
-      if (!samSelect.isBusy) void samSelect.addPoint(d.x, d.y, !e.altKey);
+      // DOWN ではジェスチャ開始のみ。UP で移動量に応じて「クリック (ポイント) / ドラッグ (囲み)」を判定する
+      samSelect.pointerDown(d, !e.altKey);
       break;
     }
     case "eyedropper": {
@@ -257,6 +257,9 @@ function onPointerMove(e: PointerEvent): void {
     interaction.polyHover = d;
   } else if (state.tool === "polygon" && interaction.polyPoints.length > 0) {
     interaction.polyHover = d;
+  } else if (state.tool === "ai-select") {
+    // 囲み選択のドラッグ中: プレビュー矩形を更新
+    samSelect.pointerDrag(d);
   }
 
   // パペットワープ: ホバー中ピンの追跡 (カーソル形状のフィードバック)
@@ -269,9 +272,16 @@ function onPointerMove(e: PointerEvent): void {
   render();
 }
 
-function onPointerUp(): void {
+function onPointerUp(e: PointerEvent): void {
   interaction.panning = null;
   stage.classList.remove("is-panning");
+
+  // AI被写体選択: 移動量に応じて「クリック (ポイント追加) / ドラッグ (囲み選択)」を確定する
+  if (state.tool === "ai-select") {
+    const lp = localPos(e);
+    const d = screenToDoc(lp.x, lp.y);
+    void samSelect.pointerUp(d);
+  }
 
   // 図形 / 矩形選択の確定
   if (interaction.preview && interaction.dragStart) {

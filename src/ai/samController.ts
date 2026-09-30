@@ -45,6 +45,10 @@ class SamSelectController {
   private embedding: { key: string; data: SamEmbeddings } | null = null;
   /** 現在指定中のポイント群 (ドキュメント座標) */
   private points: SamPoint[] = [];
+  /** ドラッグ (囲み選択) ジェスチャの状態 */
+  private dragOrigin: { x: number; y: number } | null = null;
+  private dragCurrent: { x: number; y: number } | null = null;
+  private gesturePositive = true;
   /** 状態変更の通知先 (ui/panels が設定する) */
   onStatusChange: (() => void) | null = null;
 
@@ -79,6 +83,11 @@ class SamSelectController {
   /** 指定中のポイントがあるか (Enter / Esc / ツール切替の判定用) */
   get hasPoints(): boolean {
     return this.points.length > 0;
+  }
+
+  /** ドラッグ (囲み) ジェスチャ中か */
+  get isDragging(): boolean {
+    return this.dragOrigin !== null;
   }
 
   private notify(): void {
@@ -185,7 +194,6 @@ class SamSelectController {
 
   /** クリックでポイントを追加し、マスクを更新する (positive=false で除外ポイント) */
   async addPoint(docX: number, docY: number, positive: boolean): Promise<void> {
-    console.log("[ai] addPoint", docX, docY, positive, "ready:", this.modelReady, "busy:", this.isBusy);
     if (!this.segmenter || this.busy) return;
     if (docX < 0 || docY < 0 || docX >= doc.width || docY >= doc.height) return;
     this.busy = true;
@@ -197,13 +205,92 @@ class SamSelectController {
       const emb = await this.ensureEmbedding();
       this.points.push({ x: docX, y: docY, positive });
       const logits = await this.segmenter.decode(emb, this.points, doc.width, doc.height);
-      console.log("[ai] decode ok iou:", logits.iou, "size:", logits.size);
       const mask = renderLogitsMask(logits.data, logits.size, doc.width, doc.height);
       // SAM のマスクはポイント全体から毎回再構成されるため、選択範囲は常に置き換える
       selection.applySelection((g) => g.drawImage(mask, 0, 0), "new");
       hooks.toast(`AI選択を更新 (IoU ${(logits.iou * 100).toFixed(0)}% · ポイント ${this.points.length}件)`, "ok");
     } catch (e) {
       this.points.pop(); // 失敗したポイントは取り除く (リトライ可能にする)
+      hooks.toast(`AI選択に失敗しました (${e instanceof Error ? e.message : "不明なエラー"})`, "info");
+    } finally {
+      this.busy = false;
+      this.notify();
+    }
+  }
+
+  /** ドラッグ (囲み選択) 中のプレビュー矩形 (ドキュメント座標 / null = 非ドラッグ) */
+  get boxPreview(): { x0: number; y0: number; x1: number; y1: number } | null {
+    if (!this.dragOrigin || !this.dragCurrent) return null;
+    return {
+      x0: Math.min(this.dragOrigin.x, this.dragCurrent.x),
+      y0: Math.min(this.dragOrigin.y, this.dragCurrent.y),
+      x1: Math.max(this.dragOrigin.x, this.dragCurrent.x),
+      y1: Math.max(this.dragOrigin.y, this.dragCurrent.y),
+    };
+  }
+
+  /** ポインタ_DOWN: ドラッグ (囲み) ジェスチャの開始を記録する */
+  pointerDown(p: { x: number; y: number }, positive: boolean): void {
+    if (!this.segmenter || this.isBusy) return;
+    this.dragOrigin = { ...p };
+    this.dragCurrent = { ...p };
+    this.gesturePositive = positive;
+  }
+
+  /** ポインタ_MOVE: ドラッグ中ならプレビュー矩形を更新する */
+  pointerDrag(p: { x: number; y: number }): void {
+    if (!this.dragOrigin) return;
+    this.dragCurrent = { ...p };
+  }
+
+  /** ドラッグ中のジェスチャを中断する */
+  cancelDrag(): void {
+    if (!this.dragOrigin) return;
+    this.dragOrigin = null;
+    this.dragCurrent = null;
+    hooks.render();
+  }
+
+  /**
+   * ポインタ_UP: 移動量が小さければクリック (ポイント追加)、
+   * それ以上なら囲み選択 (コーナー2点 + 中心の3ポイント) を実行する。
+   * ※ Xenova 版 ONNX には box 入力がないため、box はポイント近似で渡す
+   */
+  pointerUp(p: { x: number; y: number }): void {
+    const origin = this.dragOrigin;
+    this.dragOrigin = null;
+    this.dragCurrent = null;
+    if (!origin || !this.segmenter || this.isBusy) return;
+    const span = Math.max(Math.abs(p.x - origin.x), Math.abs(p.y - origin.y));
+    if (span < 4) {
+      void this.addPoint(p.x, p.y, this.gesturePositive);
+      return;
+    }
+    const x0 = Math.min(origin.x, p.x);
+    const y0 = Math.min(origin.y, p.y);
+    const x1 = Math.max(origin.x, p.x);
+    const y1 = Math.max(origin.y, p.y);
+    void this.applyBox(x0, y0, x1, y1, this.gesturePositive);
+  }
+
+  /** 囲み範囲 (コーナー2点 + 中心) からマスクを生成する */
+  async applyBox(x0: number, y0: number, x1: number, y1: number, positive: boolean): Promise<void> {
+    this.busy = true;
+    this.notify();
+    try {
+      await nextFrame();
+      await this.ensureEmbedding();
+      const pts: SamPoint[] = [
+        { x: x0, y: y0, positive },
+        { x: x1, y: y1, positive },
+        { x: (x0 + x1) / 2, y: (y0 + y1) / 2, positive },
+      ];
+      this.points = pts;
+      const logits = await this.segmenter!.decode(this.embedding!.data, pts, doc.width, doc.height);
+      const mask = renderLogitsMask(logits.data, logits.size, doc.width, doc.height);
+      selection.applySelection((g) => g.drawImage(mask, 0, 0), "new");
+      hooks.toast(`AI選択を更新 (IoU ${(logits.iou * 100).toFixed(0)}% · ドラッグ範囲)`, "ok");
+    } catch (e) {
       hooks.toast(`AI選択に失敗しました (${e instanceof Error ? e.message : "不明なエラー"})`, "info");
     } finally {
       this.busy = false;

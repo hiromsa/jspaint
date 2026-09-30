@@ -4,6 +4,7 @@
  * サイズバッジ、円形カーソル。
  */
 import { hexA, roundRectPath } from "../core/canvasUtils";
+import { samSelect } from "../ai/samController";
 import { state } from "../core/editorState";
 import { interaction } from "../core/interactionState";
 import { selection } from "../core/selectionStore";
@@ -41,6 +42,20 @@ export function drawStrokePreview(g: CanvasRenderingContext2D): void {
 export function drawSelectionPreview(g: CanvasRenderingContext2D): void {
   g.save();
   g.lineWidth = 1 / state.zoom;
+
+  // AI被写体選択: 囲み選択のドラッグ中プレビュー (緑の破線枠)
+  const samBox = samSelect.boxPreview;
+  if (samBox) {
+    g.strokeStyle = "#4ade80";
+    g.setLineDash([5 / state.zoom, 4 / state.zoom]);
+    g.strokeRect(
+      Math.min(samBox.x0, samBox.x1),
+      Math.min(samBox.y0, samBox.y1),
+      Math.abs(samBox.x1 - samBox.x0),
+      Math.abs(samBox.y1 - samBox.y0),
+    );
+    g.setLineDash([]);
+  }
 
   // 矩形選択: ドラッグ中の範囲を色付きオーバーレイ + 破線枠で表示
   if (interaction.preview && interaction.preview.tool === "select-rect") {

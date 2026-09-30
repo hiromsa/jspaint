@@ -101,8 +101,9 @@ async function clickAndToast(page: Page, dx: number, dy: number, text: string, m
 }
 
 /** doc 座標 → 画面座標へ変換してクリックする (fitView の式を再現 / doc は 640x640) */
-async function clickDoc(page: Page, dx: number, dy: number, mod?: "shift" | "alt"): Promise<void> {
-  const p = await page.evaluate(
+/** doc 座標 → 画面座標へ変換する (fitView の式を再現 / doc は 640x640) */
+async function docToScreen(page: Page, dx: number, dy: number): Promise<{ x: number; y: number }> {
+  return page.evaluate(
     ([x, y]) => {
       const view = document.querySelector("#view") as HTMLCanvasElement;
       const ws = document.querySelector("#workspace") as HTMLElement;
@@ -112,11 +113,25 @@ async function clickDoc(page: Page, dx: number, dy: number, mod?: "shift" | "alt
     },
     [dx, dy] as [number, number],
   );
+}
+
+async function clickDoc(page: Page, dx: number, dy: number, mod?: "shift" | "alt"): Promise<void> {
+  const p = await docToScreen(page, dx, dy);
   if (mod === "shift") await page.keyboard.down("Shift");
   if (mod === "alt") await page.keyboard.down("Alt");
   await page.mouse.click(p.x, p.y);
   if (mod === "shift") await page.keyboard.up("Shift");
   if (mod === "alt") await page.keyboard.up("Alt");
+}
+
+/** doc 座標でドラッグする (囲み選択の検証用) */
+async function dragDoc(page: Page, dx0: number, dy0: number, dx1: number, dy1: number): Promise<void> {
+  const p0 = await docToScreen(page, dx0, dy0);
+  const p1 = await docToScreen(page, dx1, dy1);
+  await page.mouse.move(p0.x, p0.y);
+  await page.mouse.down();
+  await page.mouse.move(p1.x, p1.y, { steps: 10 });
+  await page.mouse.up();
 }
 
 /** doc 矩形内の青 (#2563eb) 画素数を数える (内側にマージンを置いて Marching Ants を避ける) */
@@ -262,6 +277,11 @@ async function runE2E(): Promise<void> {
     ok("追加ポイントのトーストが出る", await waitForNewToast(page, "AI選択を更新"));
     await page.keyboard.press("Enter");
     ok("Enter でポイント確定のトーストが出る", await waitForNewToast(page, "ポイントをクリア"));
+
+    /* --- 6b) ドラッグで囲んで選択 (コーナー + 中心ポイント近似) --- */
+    await markToasts(page);
+    await dragDoc(page, 120, 120, 240, 240);
+    ok("ドラッグで囲んで選択できる (囲みトースト)", await waitForNewToast(page, "ドラッグ範囲"), (await toastText(page)).slice(-120));
 
     /* --- 7) IndexedDB キャッシュの永続化 (リロード後に自動ウォームアップ) --- */
     await page.reload({ waitUntil: "load" });
