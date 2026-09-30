@@ -82,9 +82,15 @@
       </div>
       <span class="hrule"></span>
       <div class="toolgroup" role="group" aria-label="図形">
-        <button class="toolbtn" data-tool="line"    title="直線 (L)"><i data-icon="line"></i></button>
-        <button class="toolbtn" data-tool="rect"    title="矩形 (U)"><i data-icon="square"></i></button>
-        <button class="toolbtn" data-tool="ellipse" title="円 (O)"><i data-icon="circle"></i></button>
+        <div class="toolstack" data-stack="line,rect,ellipse">
+          <button class="toolbtn" data-tool="line" title="直線 (L) — ドラッグで直線 · Shift で水平 / 垂直 / 45°"><i data-icon="line"></i></button>
+          <button class="toolstack__caret" title="直線 / 矩形 / 円 を切り替え"><i data-icon="chevron-right"></i></button>
+          <div class="toolstack__pop" hidden>
+            <button class="toolbtn" data-tool="line"    title="直線 (L) — ドラッグで直線 · Shift で水平 / 垂直 / 45°"><i data-icon="line"></i></button>
+            <button class="toolbtn" data-tool="rect"    title="矩形 (U) — ドラッグで矩形 · Shift で正方形"><i data-icon="square"></i></button>
+            <button class="toolbtn" data-tool="ellipse" title="円 (O) — ドラッグで楕円 · Shift で正円"><i data-icon="circle"></i></button>
+          </div>
+        </div>
       </div>
       <span class="hrule"></span>
       <div class="toolgroup" role="group" aria-label="選択">
@@ -416,7 +422,7 @@
     <div class="statusbar__group">
       <span class="mono st-zoom" id="st-zoom">100%</span>
       <span class="vdiv"></span>
-      <span class="mono st-ver">JSPaint v0.2.14 · TypeScript</span>
+      <span class="mono st-ver">JSPaint v0.2.15 · TypeScript</span>
     </div>
   </footer>
 
