@@ -14,6 +14,7 @@ npm run typecheck    # tsc --noEmit
 npm run test:puppet  # パペットワープ pure ロジックの単体検証 (node)
 npm run test:imageio # 画像入出力 & ホストモードの E2E 検証 (ヘッドレス Chrome/Edge, 要 build 済み)
 npm run test:hostbridge # ホスト連携 (JSPAINT_LOAD / JSPAINT_EXPORT) の E2E 検証 (ヘッドレス Chrome/Edge, 要 build 済み)
+npm run test:tooltab # ツール選択時の「ツール」タブ自動切替の E2E 検証 (ヘッドレス Chrome/Edge, 要 build 済み)
 ```
 
 ビルド成果物は `dist/index.html` の **1ファイルのみ**。`vite-plugin-singlefile` により JS/CSS がすべてインライン化されるため、
@@ -26,7 +27,7 @@ npm run test:hostbridge # ホスト連携 (JSPAINT_LOAD / JSPAINT_EXPORT) の E2
 | Header | **開く/保存/クリップボードコピー**、Undo/Redo、ズーム (5%〜800%)、フィット、ドキュメント情報、キャンセル/完了 |
 | Toolbox | ブラシ・消しゴム・バケツ / 指先・**膨張**・覆い焼き・焼き込み・フィルターペン / 直線・矩形・円 / 矩形・投げ縄・多角形・魔法の杖・選択ペン選択 / スポイト・手のひら + 前景/背景色 |
 | Workspace | チェッカーボード + **可変サイズのステージ** (画像読み込みで実寸に追従)。パン (Space/中ボタン/手のひら)、ズーム (ホイール)、**画像のドラッグ&ドロップ読み込み** |
-| Properties | ①ツール設定 (サイズ・不透明度・許容度・選択合成モード) ②前処理フィルター ③レイヤー |
+| Properties | ①ツール設定 (サイズ・不透明度・許容度・選択合成モード) ②前処理フィルター ③レイヤー (**ツール選択で自動的に「ツール」タブへ切替**) |
 | StatusBar | ツール名、X/Y座標、操作ガイド、バージョン |
 | Export Modal | 合成画像 & 白黒マスクのプレビュー、PNG保存、`postMessage({ type: 'JSPAINT_EXPORT', ... })` |
 

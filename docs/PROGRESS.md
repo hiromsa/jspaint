@@ -12,7 +12,7 @@ TypeScript 実装の原型として、描画/選択/フィルター/エクスポ
 ### 基盤
 - Vite + TypeScript。ビルドは単一HTML (`vite-plugin-singlefile`, `dist/index.html`) で file:// 単体起動可
 - Photoshop/Figma ライクな高密度ダークテーマ (ui.md スタイルガイド準拠)
-- Header / Toolbox / Workspace / Properties(3タブ) / StatusBar + Export モーダル
+- Header / Toolbox / Workspace / Properties(3タブ・**ツール選択で「ツール」タブへ自動切替**) / StatusBar + Export モーダル
 - **モジュール構成** (詳細は [docs/specification/architecture.md](./specification/architecture.md)):
   `core/` (ストア・ロジック) / `painting/` (ツール) / `rendering/` (描画) / `interaction/` (入力) / `ui/` (DOM配線)。
   core→UI の逆依存は hooks (`core/hooks.ts`) 経由、`app.ts` は生成と配線のみ (~80行)
@@ -127,6 +127,7 @@ TypeScript 実装の原型として、描画/選択/フィルター/エクスポ
 | 24 | **パペットワープのプレビューを高速化** — ドラッグ中の重さ (pointermove 毎に全三角形のクリップ + フルサイズ転写が同期的に走る) を 3 つの低リスク改善で軽減。① `moveDragPin` のプレビュー更新を `requestAnimationFrame` で **1 フレーム 1 回へ間引き**、ドラッグ中は `imageSmoothingQuality = "low"` で転写 (ピンを離した時 / 確定時に `high` で仕上げ直すため確定画質は不変、`endDrag` / `commit` / `resetTo` / `dispose` で保留中の更新をキャンセル)。② 三角形ごとの `drawImage` を**変形先外接矩形を逆アフィン変換したソース領域に限定** (`warpPaint.ts` に `inverseTransformRect` を追加、±1px のサンプリング余白つきでソース範囲へクランプ)。③ **ピン未移動 (恒等変形) のうちはメッシュ転写をスキップ**し元画像をそのままプレビューに使用 (ピン追加・削除・メッシュ再生成時の負荷軽減)。検証: typecheck + build + `npm run test:puppet` (25 合格)。docs 更新 (ui.md 2.4.1 / 本書) |
 | 25 | **シャープフィルターを追加** — フィルタータブ (全体フィルター) とフィルターペン (ツールタブの「フィルター効果」) の両方に「シャープ」(0〜100%) を追加。CSS filter にシャープは存在しないため `FilterSettings.applySharpen()` を新設し、**アンシャープマスク** (出力 = 元画像 + 強度 × (元画像 − blur(1px) 参照)) を自前実装 — ぼかし参照は GPU 高速な CSS blur を利用し、premultiply 空間で計算して半透明エッジの色ズレを回避、アルファは不変。`layerPreview` / `bake` / フィルターペン (bbox 切り抜き canvas へ事前適用 — ストローク中の処理をブラシ周辺の小領域に限定) はシャープ済み canvas をソースとして使用し、UI は既存の data-fx-* 共通機構で両スコープへ追加 (`FX_FORMAT` への 1 行のみ・二重実装なし)。検証: `npm run test:filterpen` にシャープ 8 ケースを追加 (29 合格 — 両スコープの UI 存在 / ペンの範囲焼き込み・範囲限定 / 全体プレビュー・非破壊 / ベイク・設定リセット) + 既存 5 テスト (toolsize 22 / maskdisplay 13 / puppet 25 / imageio 27 / hostbridge 12) 全合格 + typecheck + build。docs 更新 (ui.md 2.3 / architecture.md / README / 本書) |
 | 26 | **シャープフィルターの効果を強化** — 「あまりシャープにならない」不満への対応。原因は CSS `blur(1px)` が σ≈0.5px の非常に弱いぼかしのためアンシャープマスクの差分 (元画像 − ぼかし参照) が小さく、amount 1.0 でも効果が控えめだったこと。① 強度 100% での amount を 1.0 → **2.0** へ。② ぼかし参照半径を固定 1px → **強度に比例して 1〜2.5px** へ (低強度 = ほんのり細かく / 高強度 = はっきり大胆に、スライダー全域が有効に機能)。③ フィルターペンの bbox 余白へ参照半径上限 (`FilterSettings.SHARPEN_RADIUS_MAX` を public 化) を加算し参照切れを防止。E2E に「強度を下げると効果も弱まる」ケースを追加し、効果の実測値 (エッジ変化量: 100% = 71 / 20% = 21、強化前 100% は 8〜20 程度) をテストログへ出力。検証: typecheck + build + `npm run test:filterpen` 30 合格。docs 更新 (ui.md 2.3 / 本書) |
+| 27 | **ツール選択時の「ツール」タブ自動切替** — 右パネル (Properties) のタブを、ツールを選択したタイミングで自動的に「ツール」タブへ切り替える機能を追加。フィルター / レイヤータブ表示中にツールを選ぶ (ツールボタン click / ショートカットキー / 階層スタック) と選択したツールの設定が即座に表示される。タブ切替ロジックを `ui/panels.ts` の新関数 `activateTab()` に共通化し、`setTool()` から `activateTab("tool")` を呼ぶ形に統一 (タブの手動クリックも同じ関数経由・二重実装なし)。ツールタブ表示中の切替では変化なし (冪等)。検証: 新規 `npm run test:tooltab` (puppeteer-core E2E、15 ケース合格 — 初期状態 / キーボード・ボタン両入口の自動復帰 / 同一ツール再選択でも復帰 / ツールタブ中の切替でタブ維持 / 手動切替は従来どおり) + 既存 6 テスト (toolsize 22 / filterpen 30 / puppet 25 / maskdisplay 13 / imageio 27 / hostbridge 12) 全合格 + typecheck + build。docs 更新 (ui.md 2.3 / 本書) |
 
 ## 次回候補 (Backlog)
 

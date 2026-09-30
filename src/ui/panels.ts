@@ -65,6 +65,8 @@ export function setTool(tool: ToolId): void {
   const opLabel = $("#opacity-label");
   opLabel.textContent = tool === "smudge" ? "強さ (にじみ)" : tool === "bloat" ? "強さ (膨張)" : tool === "dodge" || tool === "burn" ? "強さ (露出)" : tool === "filter-pen" ? "適用の強さ" : "不透明度";
   syncToolStackDisplay(tool);
+  // ツール選択に合わせて右パネルを「ツール」タブへ自動切替 (選択したツールの設定を即座に見せる)
+  activateTab("tool");
   $$("[data-show]").forEach((el) => {
     const list = (el.dataset.show ?? "").split(",");
     el.classList.toggle("is-hidden", !list.includes(tool));
@@ -221,12 +223,14 @@ export function bindControls(): void {
   $("#btn-swap-colors").addEventListener("click", swapColors);
 }
 
+/** 右パネルのタブを切り替える (タブクリック / setTool による自動切替で共用) */
+export function activateTab(name: string): void {
+  $$(".tab").forEach((t) => t.classList.toggle("is-active", (t as HTMLElement).dataset.tab === name));
+  $$(".panel").forEach((p) => p.classList.toggle("is-active", p.id === `panel-${name}`));
+}
+
 export function bindTabs(): void {
   $$(".tab").forEach((tab) =>
-    tab.addEventListener("click", () => {
-      const name = (tab as HTMLElement).dataset.tab;
-      $$(".tab").forEach((t) => t.classList.toggle("is-active", t === tab));
-      $$(".panel").forEach((p) => p.classList.toggle("is-active", p.id === `panel-${name}`));
-    }),
+    tab.addEventListener("click", () => activateTab((tab as HTMLElement).dataset.tab ?? "")),
   );
 }
