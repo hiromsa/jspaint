@@ -22,11 +22,14 @@ export const MW_EDGE_HIT_RADIUS = 7;
 /** パッチ数の上限 (細分化しすぎて転写が重くなるのを防ぐ) */
 export const MW_MAX_PATCHES = 256;
 
+/** セッション内 Undo の最大ステップ数 (ドキュメント履歴と同じ) */
+export const MW_MAX_HISTORY = 40;
+
 /** ドラッグ中の操作種別 */
 type MwDrag =
-  | { kind: "node"; nodeId: number; last: Pt }
-  | { kind: "handle"; nodeId: number; neighborId: number; base: Pt; start: Pt }
-  | { kind: "edge"; drag: MwEdgeDrag };
+  | { kind: "node"; nodeId: number; last: Pt; moved: boolean }
+  | { kind: "handle"; nodeId: number; neighborId: number; base: Pt; start: Pt; moved: boolean }
+  | { kind: "edge"; drag: MwEdgeDrag; moved: boolean };
 
 /** オーバーレイ表示用のハンドル情報 */
 export interface MwHandleView {
@@ -57,6 +60,10 @@ class MeshWarpSession {
   private previewRaf = 0;
   /** プレビューが低品質 (ドラッグ中の高速転写) のままか */
   private lowQualityPreview = false;
+  /** セッション内 Undo スタック (操作前のグリッドスナップショット。底 = ツール開始時の状態) */
+  private readonly undoStack: MeshWarpGrid[] = [];
+  /** セッション内 Redo スタック */
+  private readonly redoStack: MeshWarpGrid[] = [];
 
   /* ---------- セッションのライフサイクル ---------- */
 
@@ -77,6 +84,10 @@ class MeshWarpSession {
     this.drag = null;
     this.hoverEdge = null;
     this.lowQualityPreview = false;
+    // セッション内履歴: ツール開始時の状態を底に置く (Ctrl+Z でここまで戻せる)
+    this.undoStack.length = 0;
+    this.redoStack.length = 0;
+    this.undoStack.push(this.grid.clone());
     this.active = true;
     hooks.toast("ノード / ハンドル / 辺をドラッグで変形 · ダブルクリックで細分化 · Enter=確定 / Esc=取消", "info");
     hooks.syncToolGuide();
@@ -128,7 +139,7 @@ class MeshWarpSession {
       if (hit) {
         const base = grid.node(hit.nodeId).posHandles.get(hit.neighborId)
           ?? subPt(grid.handleTarget(hit.nodeId, hit.neighborId).point, grid.node(hit.nodeId).pos);
-        this.drag = { kind: "handle", nodeId: hit.nodeId, neighborId: hit.neighborId, base, start: d };
+        this.drag = { kind: "handle", nodeId: hit.nodeId, neighborId: hit.neighborId, base, start: d, moved: false };
         return;
       }
     }
@@ -136,14 +147,14 @@ class MeshWarpSession {
     const node = grid.hitNode(d, MW_NODE_HIT_RADIUS / zoom);
     if (node) {
       this.selectedNodeId = node.id;
-      this.drag = { kind: "node", nodeId: node.id, last: d };
+      this.drag = { kind: "node", nodeId: node.id, last: d, moved: false };
       hooks.render();
       return;
     }
     // 3. エッジ (辺の直接ドラッグ)
     const edge = grid.hitEdge(d, MW_EDGE_HIT_RADIUS / zoom);
     if (edge) {
-      this.drag = { kind: "edge", drag: grid.beginEdgeDrag(edge, d) };
+      this.drag = { kind: "edge", drag: grid.beginEdgeDrag(edge, d), moved: false };
     }
   }
 
@@ -152,6 +163,11 @@ class MeshWarpSession {
     const grid = this.grid;
     const drag = this.drag;
     if (!grid || !drag) return;
+    if (!drag.moved) {
+      // 最初の移動で「操作前の状態」をセッション内履歴へ積む (Ctrl+Z で 1 操作ずつ戻せる)
+      this.pushUndo();
+      drag.moved = true;
+    }
     if (drag.kind === "node") {
       grid.moveNode(drag.nodeId, subPt(d, drag.last));
       drag.last = d;
@@ -169,12 +185,19 @@ class MeshWarpSession {
   /** ドラッグを終了し、高品質でプレビューを仕上げ直す */
   endDrag(): void {
     if (!this.drag) return;
+    const drag = this.drag;
     this.drag = null;
+    if (!drag.moved) {
+      // 動かさずに離した (クリックのみ) → 履歴に積んだ操作前スナップショットを取り消す
+      this.undoStack.pop();
+      this.redoStack.length = 0;
+      return;
+    }
     if (this.lowQualityPreview) this.refresh("high");
     hooks.render();
   }
 
-  /** ダブルクリック: エッジ上ならエッジ分割 / パッチ内なら 4 分割 (仕様 3.3) */
+  /** ダブルクリック: エッジ上ならライン追加 / パッチ内なら縦横ライン追加 (グリッド全体に貫通、仕様 3.3) */
   handleDoubleTap(d: Pt, zoom: number): void {
     const grid = this.grid;
     if (!grid) return;
@@ -182,10 +205,11 @@ class MeshWarpSession {
     if (grid.hitNode(d, MW_NODE_HIT_RADIUS / zoom)) return;
     const edge = grid.hitEdge(d, MW_EDGE_HIT_RADIUS / zoom);
     if (edge) {
+      this.pushUndo();
       grid.splitEdgeHit(edge);
       this.selectedNodeId = null;
       this.refresh("high");
-      hooks.toast("エッジにポイントを追加しました", "info");
+      hooks.toast("ラインを追加しました", "info");
       hooks.render();
       return;
     }
@@ -195,12 +219,53 @@ class MeshWarpSession {
     }
     const hit = grid.patchAt(d);
     if (hit) {
-      grid.splitPatch(hit.patch, hit.u, hit.v);
+      this.pushUndo();
+      grid.splitPatchAt(hit.patch, hit.u, hit.v);
       this.selectedNodeId = null;
       this.refresh("high");
-      hooks.toast("パッチを 4 分割しました", "info");
+      hooks.toast("縦横のラインを追加しました", "info");
       hooks.render();
     }
+  }
+
+  /* ---------- セッション内 Undo / Redo (Ctrl+Z / Ctrl+Y) ---------- */
+
+  /** 操作前のグリッド状態を履歴へ積む (新しい操作を行うたびに Redo をクリア) */
+  pushUndo(): void {
+    const grid = this.grid;
+    if (!grid) return;
+    this.undoStack.push(grid.clone());
+    if (this.undoStack.length > MW_MAX_HISTORY) this.undoStack.shift();
+    this.redoStack.length = 0;
+  }
+
+  /** セッション内の 1 操作を取り消す (ツール開始時の状態まで戻せる) */
+  undo(): void {
+    const grid = this.grid;
+    if (!grid || this.undoStack.length === 0) return;
+    this.redoStack.push(grid.clone());
+    this.grid = this.undoStack.pop()!;
+    this.selectedNodeId = null;
+    this.hoverEdge = null;
+    this.refresh("high");
+    hooks.render();
+  }
+
+  /** 取り消したセッション内の操作をやり直す */
+  redo(): void {
+    const grid = this.grid;
+    if (!grid || this.redoStack.length === 0) return;
+    this.undoStack.push(grid.clone());
+    this.grid = this.redoStack.pop()!;
+    this.selectedNodeId = null;
+    this.hoverEdge = null;
+    this.refresh("high");
+    hooks.render();
+  }
+
+  /** レイヤー id に対応する変形プレビュー canvas (セッション中のみ。renderer の表示差し替え用) */
+  displayCanvas(layerId: number): HTMLCanvasElement | null {
+    return this.active ? this.previews.get(layerId) ?? null : null;
   }
 
   /* ---------- ホバー / ハンドル表示 (仕様 3.2) ---------- */
@@ -332,6 +397,9 @@ class MeshWarpSession {
     this.selectedNodeId = null;
     this.drag = null;
     this.hoverEdge = null;
+    // セッション内履歴も破棄する (確定済みの変形はドキュメント履歴の Undo で戻る)
+    this.undoStack.length = 0;
+    this.redoStack.length = 0;
     hooks.render();
     hooks.syncToolGuide();
   }

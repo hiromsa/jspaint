@@ -11,7 +11,7 @@ export const TOOLS: Record<ToolId, { label: string; key: string; guide: string; 
   smudge:      { label: "指先",         key: "S", guide: "ドラッグで色をにじませる · [ ] でサイズ", cursor: "none" },
   bloat:       { label: "膨張",         key: "V", guide: "ドラッグで領域を球面状に変形 · 長押しで持続 · [ ] でサイズ · Alt で方向を一時反転", cursor: "none" },
   "puppet-warp": { label: "パペットワープ", key: "T", guide: "クリック=ピンを打つ (Alt=固定ピン) · ピンをドラッグ=変形 · ダブルクリック=ピン削除 · Enter=確定 / Esc=取消 · 選択範囲があればその範囲のみ", cursor: "crosshair" },
-  "mesh-warp": { label: "メッシュワープ", key: "T", guide: "ノードをドラッグ=変形 · ノード選択でハンドル表示 (ドラッグ=曲がり) · 辺をドラッグ=曲線変形 · 辺/面をダブルクリック=細分化 · Enter=確定 / Esc=取消 · 選択範囲があればその範囲のみ", cursor: "crosshair" },
+  "mesh-warp": { label: "メッシュワープ", key: "T", guide: "ノードをドラッグ=変形 · ノード選択でハンドル表示 (ドラッグ=曲がり) · 辺をドラッグ=曲線変形 · 辺/面をダブルクリック=ライン追加 (全体に貫通) · Ctrl+Z / Ctrl+Y=セッション内を戻す / 進める · Enter=確定 / Esc=取消 · 選択範囲があればその範囲のみ", cursor: "crosshair" },
   dodge:       { label: "覆い焼き",     key: "D", guide: "ドラッグで明るく · Alt で焼き込みに反転", cursor: "none" },
   burn:        { label: "焼き込み",     key: "J", guide: "ドラッグで暗く · Alt で覆い焼きに反転", cursor: "none" },
   "filter-pen": { label: "フィルターペン", key: "F", guide: "ドラッグでなぞった範囲にフィルター効果を焼き込む · ツールタブで内容を設定", cursor: "none" },

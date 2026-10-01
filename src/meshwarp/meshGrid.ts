@@ -1,11 +1,13 @@
 /**
- * meshwarp/meshGrid.ts — メッシュワープのグリッド (Node / Edge / Patch) とその数理ロジック
+ * meshwarp/meshGrid.ts — メッシュワープのグリッド (行 × 列の完全グリッド) とその数理ロジック
  *
  * データ構造 (仕様 2):
  * - Node  : 座標 (home = 変形前 / pos = 変形後) と、隣接方向ごとのベジェハンドル (相対ベクトル)
- * - Edge  : 2 つの Node を結ぶ 3 次ベジェ曲線。コーナー間に中間 Node がある場合はその連鎖 (chain)
- * - Patch : 4 つの Node と 4 つの Edge chain で囲まれた領域。内部の変形は双三次クーンズパッチ
+ * - Edge  : 隣接する 2 つの Node を結ぶ 3 次ベジェ曲線 (行内 = 水平エッジ / 列内 = 垂直エッジ)
+ * - Patch : 4 つの Node で囲まれた領域。内部の変形は双三次クーンズパッチ
  *
+ * グリッドは「行 × 列」の完全グリッドとして管理するため、ポイント追加 (列 / 行の挿入) は
+ * **グリッド全体 (最初の矩形の幅・高さ) に貫通**し、T ジャンクション (不整合な境界) は発生しない。
  * canvas に依存しない純粋ロジックのため単体検証が容易 (npm run test:meshwarp)。
  */
 import type { Pt } from "../core/types";
@@ -30,7 +32,7 @@ export interface MwNode {
   posHandles: Map<number, Pt>;
 }
 
-/** 4 つの Node と 4 つの Edge chain で囲まれたパッチ (chain は両端のコーナーを含む ID 列) */
+/** 4 つの Node と 4 辺 (chain = 両端を含む Node ID 列。完全グリッドでは常に単一セグメント) */
 export interface MwPatch {
   tl: number;
   tr: number;
@@ -43,8 +45,14 @@ export interface MwPatch {
   left: number[];
 }
 
-/** エッジのヒット結果 (セグメント a→b 上のパラメータ t。a→b 向きに正規化) */
+/** エッジのヒット結果 (エッジ a→b 上のパラメータ t。a→b 向きに正規化) */
 export interface MwEdgeHit {
+  /** true = 水平エッジ (行内の左右方向) / false = 垂直エッジ (列内の上下方向) */
+  horizontal: boolean;
+  /** 水平なら行 index / 垂直なら列 index */
+  line: number;
+  /** 分割対象のセグメント index (水平なら列 index / 垂直なら行 index) */
+  segment: number;
   aId: number;
   bId: number;
   t: number;
@@ -102,7 +110,6 @@ export function deCasteljau(p0: Pt, p1: Pt, p2: Pt, p3: Pt, t: number): { c: Pt;
   return { c, l2, r2 };
 }
 
-
 /** エッジ直接ドラッグの重み (仕様 4.3): ΔP = ΔD × B / (B1² + B2²) */
 export function edgeDragWeights(b1: number, b2: number): { w1: number; w2: number } {
   const n = b1 * b1 + b2 * b2;
@@ -111,23 +118,27 @@ export function edgeDragWeights(b1: number, b2: number): { w1: number; w2: numbe
 }
 
 /**
- * メッシュワープのグリッド。Node (id / home / pos / ハンドル) と Patch の集合を管理し、
- * クーンズパッチ評価・細分化・エッジ操作を提供する。
+ * メッシュワープのグリッド (行 × 列の完全グリッド)。
+ * Node (id / home / pos / ハンドル) の行列を管理し、クーンズパッチ評価・
+ * 列 / 行の挿入 (ポイント追加)・エッジ操作を提供する。
  */
 export class MeshWarpGrid {
   readonly nodes = new Map<number, MwNode>();
-  readonly patches: MwPatch[] = [];
+  /** ノード ID の行列 ([行][列]) */
+  readonly rows: number[][];
   private nextId = 1;
 
-  /** 対象矩形 (右上は排他) を囲む 4 ノード・1 パッチの初期グリッドを作る (仕様 3.1) */
+  /** 対象矩形 (右上は排他) を囲む 2×2 ノード・1 パッチの初期グリッドを作る (仕様 3.1) */
   static createRect(x0: number, y0: number, x1: number, y1: number): MeshWarpGrid {
-    const grid = new MeshWarpGrid();
-    const tl = grid.addNode(x0, y0);
-    const tr = grid.addNode(x1, y0);
-    const br = grid.addNode(x1, y1);
-    const bl = grid.addNode(x0, y1);
-    grid.patches.push({ tl, tr, br, bl, top: [tl, tr], right: [tr, br], bottom: [bl, br], left: [tl, bl] });
+    const grid = new MeshWarpGrid([[], []]);
+    grid.rows[0].push(grid.addNode(x0, y0), grid.addNode(x1, y0));
+    grid.rows[1].push(grid.addNode(x0, y1), grid.addNode(x1, y1));
     return grid;
+  }
+
+  /** ノード行列からグリッドを構築する (テスト / clone 用) */
+  constructor(rows: number[][]) {
+    this.rows = rows;
   }
 
   private addNode(x: number, y: number): number {
@@ -140,6 +151,29 @@ export class MeshWarpGrid {
       posHandles: new Map(),
     });
     return id;
+  }
+
+  get rowCount(): number {
+    return this.rows.length;
+  }
+
+  get colCount(): number {
+    return this.rows[0].length;
+  }
+
+  /** 全パッチ (行列から生成)。chain は完全グリッドのため常に単一セグメント */
+  get patches(): MwPatch[] {
+    const out: MwPatch[] = [];
+    for (let r = 0; r < this.rowCount - 1; r++) {
+      for (let c = 0; c < this.colCount - 1; c++) {
+        const tl = this.rows[r][c];
+        const tr = this.rows[r][c + 1];
+        const br = this.rows[r + 1][c + 1];
+        const bl = this.rows[r + 1][c];
+        out.push({ tl, tr, br, bl, top: [tl, tr], right: [tr, br], bottom: [bl, br], left: [tl, bl] });
+      }
+    }
+    return out;
   }
 
   node(id: number): MwNode {
@@ -162,6 +196,22 @@ export class MeshWarpGrid {
     return true;
   }
 
+  /** グリッド全体のディープコピー (セッション内 Undo 用) */
+  clone(): MeshWarpGrid {
+    const copy = new MeshWarpGrid(this.rows.map((row) => [...row]));
+    (copy as unknown as { nextId: number }).nextId = this.nextId;
+    for (const n of this.nodes.values()) {
+      copy.nodes.set(n.id, {
+        id: n.id,
+        home: { ...n.home },
+        pos: { ...n.pos },
+        homeHandles: new Map([...n.homeHandles].map(([k, v]) => [k, { ...v }])),
+        posHandles: new Map([...n.posHandles].map(([k, v]) => [k, { ...v }])),
+      });
+    }
+    return copy;
+  }
+
   /* ---------- クーンズパッチ評価 (仕様 4.1) ---------- */
 
   /** エッジ (a→b) の 3 次ベジェ制御点 [P0, P1, P2, P3]。
@@ -177,45 +227,10 @@ export class MeshWarpGrid {
     return [p0, p1, p2, p3];
   }
 
-  /**
-   * chain のセグメント毎の u 区間 (home 空間の制御点折れ線長に比例)。
-   * home / pos 両空間で同じ区間割り当てを使うことで、同じ u が両空間の対応点を指す。
-   */
-  private chainRanges(chain: number[]): { a: MwNode; b: MwNode; start: number; width: number }[] {
-    const segs: { a: MwNode; b: MwNode; len: number }[] = [];
-    let total = 0;
-    for (let i = 0; i < chain.length - 1; i++) {
-      const a = this.node(chain[i]);
-      const b = this.node(chain[i + 1]);
-      const [p0, p1, p2, p3] = this.edgePoints(a, b, "home");
-      // 3 次ベジェの弧長を制御点折れ線で近似
-      const len = Math.hypot(p1.x - p0.x, p1.y - p0.y) + Math.hypot(p2.x - p1.x, p2.y - p1.y) + Math.hypot(p3.x - p2.x, p3.y - p2.y);
-      segs.push({ a, b, len });
-      total += len;
-    }
-    let start = 0;
-    return segs.map((s) => {
-      const width = total > 1e-12 ? s.len / total : 1 / Math.max(1, segs.length);
-      const range = { a: s.a, b: s.b, start, width };
-      start += width;
-      return range;
-    });
-  }
-
-  /** エッジ chain (複数セグメントのベジェ連鎖) をパラメータ u ∈ [0,1] で評価する */
-  evaluateChain(chain: number[], u: number, space: MwSpace): Pt {
-    const ranges = this.chainRanges(chain);
-    const uu = clamp01(u);
-    for (const r of ranges) {
-      if (uu <= r.start + r.width + 1e-9) {
-        const t = r.width > 1e-12 ? clamp01((uu - r.start) / r.width) : 0.5;
-        const [p0, p1, p2, p3] = this.edgePoints(r.a, r.b, space);
-        return bezierAt(p0, p1, p2, p3, t);
-      }
-    }
-    // 浮動小数誤差で見つからない場合 (u ≈ 1) は終点ノードを返す
-    const last = ranges[ranges.length - 1];
-    return this.nodePos(last.b.id, space);
+  /** エッジ (a→b) をパラメータ t ∈ [0,1] で評価する */
+  evaluateEdge(aId: number, bId: number, t: number, space: MwSpace): Pt {
+    const [p0, p1, p2, p3] = this.edgePoints(this.node(aId), this.node(bId), space);
+    return bezierAt(p0, p1, p2, p3, clamp01(t));
   }
 
   /**
@@ -223,10 +238,10 @@ export class MeshWarpGrid {
    *   S(u,v) = Lc(u,v) + Ld(u,v) - B(u,v)
    */
   evaluatePatch(patch: MwPatch, u: number, v: number, space: MwSpace): Pt {
-    const ct = this.evaluateChain(patch.top, u, space);
-    const cb = this.evaluateChain(patch.bottom, u, space);
-    const dl = this.evaluateChain(patch.left, v, space);
-    const dr = this.evaluateChain(patch.right, v, space);
+    const ct = this.evaluateEdge(patch.tl, patch.tr, u, space);
+    const cb = this.evaluateEdge(patch.bl, patch.br, u, space);
+    const dl = this.evaluateEdge(patch.tl, patch.bl, v, space);
+    const dr = this.evaluateEdge(patch.tr, patch.br, v, space);
     const tl = this.nodePos(patch.tl, space);
     const tr = this.nodePos(patch.tr, space);
     const br = this.nodePos(patch.br, space);
@@ -317,35 +332,45 @@ export class MeshWarpGrid {
   }
 
   /**
-   * エッジ chain の全セグメントをサンプリングして pos に最も近いエッジを探す
-   * (radius はドキュメント px)。t はセグメント a→b 向きに正規化する。
+   * 全エッジ (水平 / 垂直) をサンプリングして pos に最も近いエッジを探す
+   * (radius はドキュメント px)。t はエッジ a→b 向きに正規化する。
    */
   hitEdge(pos: Pt, radius: number): MwEdgeHit | null {
-    let best: MwEdgeHit | null = null;
-    const seen = new Set<string>(); // 隣接パッチで共有されるセグメントの重複評価を避ける
+    const candidates: MwEdgeHit[] = [];
     const samples = 10;
-    for (const patch of this.patches) {
-      for (const side of MW_SIDES) {
-        const chain = patch[side];
-        for (let i = 0; i < chain.length - 1; i++) {
-          const aId = chain[i];
-          const bId = chain[i + 1];
-          const key = aId < bId ? `${aId},${bId}` : `${bId},${aId}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          const [p0, p1, p2, p3] = this.edgePoints(this.node(aId), this.node(bId), "pos");
-          for (let k = 0; k <= samples; k++) {
-            const t = k / samples;
-            const p = bezierAt(p0, p1, p2, p3, t);
-            const d = Math.hypot(p.x - pos.x, p.y - pos.y);
-            if (d <= radius && (!best || d < best.distance)) {
-              best = { aId, bId, t, distance: d };
-            }
-          }
+    // 水平エッジ (行 r の列 c ↔ c+1)
+    for (let r = 0; r < this.rowCount; r++) {
+      for (let c = 0; c < this.colCount - 1; c++) {
+        const aId = this.rows[r][c];
+        const bId = this.rows[r][c + 1];
+        const [p0, p1, p2, p3] = this.edgePoints(this.node(aId), this.node(bId), "pos");
+        for (let k = 0; k <= samples; k++) {
+          const t = k / samples;
+          const p = bezierAt(p0, p1, p2, p3, t);
+          const distance = Math.hypot(p.x - pos.x, p.y - pos.y);
+          if (distance <= radius) candidates.push({ horizontal: true, line: r, segment: c, aId, bId, t, distance });
         }
       }
     }
-    if (!best) return null;
+    // 垂直エッジ (列 c の行 r ↔ r+1)
+    for (let c = 0; c < this.colCount; c++) {
+      for (let r = 0; r < this.rowCount - 1; r++) {
+        const aId = this.rows[r][c];
+        const bId = this.rows[r + 1][c];
+        const [p0, p1, p2, p3] = this.edgePoints(this.node(aId), this.node(bId), "pos");
+        for (let k = 0; k <= samples; k++) {
+          const t = k / samples;
+          const p = bezierAt(p0, p1, p2, p3, t);
+          const distance = Math.hypot(p.x - pos.x, p.y - pos.y);
+          if (distance <= radius) candidates.push({ horizontal: false, line: c, segment: r, aId, bId, t, distance });
+        }
+      }
+    }
+    if (candidates.length === 0) return null;
+    let best = candidates[0];
+    for (const h of candidates) {
+      if (h.distance < best.distance) best = h;
+    }
     // 最寄りサンプルの近傍で t を精緻化
     const [p0, p1, p2, p3] = this.edgePoints(this.node(best.aId), this.node(best.bId), "pos");
     const step = 1 / samples;
@@ -360,23 +385,18 @@ export class MeshWarpGrid {
         bt = t;
       }
     }
-    return { aId: best.aId, bId: best.bId, t: bt, distance: bd };
+    return { ...best, t: bt, distance: bd };
   }
 
   /** ノード id の隣接ノード (エッジで直結するノード) の ID 一覧 */
   neighborIdsOf(id: number): number[] {
-    const out = new Set<number>();
-    for (const patch of this.patches) {
-      for (const side of MW_SIDES) {
-        const chain = patch[side];
-        for (let i = 0; i < chain.length; i++) {
-          if (chain[i] !== id) continue;
-          if (i > 0) out.add(chain[i - 1]);
-          if (i < chain.length - 1) out.add(chain[i + 1]);
-        }
-      }
-    }
-    return [...out];
+    const [r, c] = this.indexOfNode(id);
+    const out: number[] = [];
+    if (c > 0) out.push(this.rows[r][c - 1]);
+    if (c < this.colCount - 1) out.push(this.rows[r][c + 1]);
+    if (r > 0) out.push(this.rows[r - 1][c]);
+    if (r < this.rowCount - 1) out.push(this.rows[r + 1][c]);
+    return out;
   }
 
   /**
@@ -439,14 +459,56 @@ export class MeshWarpGrid {
     this.node(drag.bId).posHandles.set(drag.aId, { x: drag.baseP2.x + ex, y: drag.baseP2.y + ey });
   }
 
-  /* ---------- 細分化 (仕様 3.3) ---------- */
+  /* ---------- 細分化 (仕様 3.3) — 列 / 行の挿入 (グリッド全体に貫通) ---------- */
 
   /**
-   * エッジセグメント (a→b) をパラメータ t で 2 分割する (ド・カステリョ、仕様 4.2)。
-   * home / pos 両空間で分割し、新ノードに両空間のハンドルを設定する。
-   * chain を共有する全パッチ (隣接パッチ) にも新ノードを挿入する。新ノードの ID を返す。
+   * エッジのヒット結果に基づきポイントを追加する。
+   * 水平エッジ上 → 新しい**列**を全行に、垂直エッジ上 → 新しい**行**を全列に挿入する
+   * (ラインは最初の矩形の幅・高さまで貫通する)。
    */
-  splitEdgeAt(aId: number, bId: number, t: number): number {
+  splitEdgeHit(hit: MwEdgeHit): void {
+    if (hit.horizontal) this.splitColumnAt(hit.segment, hit.t);
+    else this.splitRowAt(hit.segment, hit.t);
+  }
+
+  /**
+   * パッチを (u, v) を通る縦横 2 本のラインで分割する (仕様 3.3)。
+   * ラインは隣接パッチにも連動して**グリッド全体まで貫通**する
+   * (新しい列と行を全行 / 全列に挿入)。
+   */
+  splitPatchAt(patch: MwPatch, u: number, v: number): void {
+    const [r, c] = this.indexOfNode(patch.tl);
+    this.splitColumnAt(c, clamp01(u));
+    this.splitRowAt(r, clamp01(v));
+  }
+
+  /** 列 seg と seg+1 の間に新しい列を挿入する (全行に新ノード。ド・カステリョ、仕様 4.2) */
+  splitColumnAt(seg: number, t: number): void {
+    const newIds: number[] = [];
+    for (let r = 0; r < this.rowCount; r++) {
+      newIds.push(this.splitNodeBetween(this.rows[r][seg], this.rows[r][seg + 1], t));
+    }
+    for (let r = 0; r < this.rowCount; r++) {
+      this.rows[r].splice(seg + 1, 0, newIds[r]);
+    }
+  }
+
+  /** 行 seg と seg+1 の間に新しい行を挿入する (全列に新ノード。ド・カステリョ、仕様 4.2) */
+  splitRowAt(seg: number, t: number): void {
+    const newRow: number[] = [];
+    for (let c = 0; c < this.colCount; c++) {
+      newRow.push(this.splitNodeBetween(this.rows[seg][c], this.rows[seg + 1][c], t));
+    }
+    this.rows.splice(seg + 1, 0, newRow);
+  }
+
+  /**
+   * エッジ (a→b) をパラメータ t で 2 分割する新ノードを生成する (ド・カステリョ、仕様 4.2)。
+   * 分割後の 2 セグメント [P0, L1, L2, C] / [C, R2, R1, P3] が元の曲線を正確に継承するよう、
+   * a / b の相手方向ハンドルを部分曲線の制御点 (L1 / R1) へ更新し、キーを新ノード方向へ付け替える。
+   * 行列 (rows) への挿入は呼び出し側が行う。
+   */
+  private splitNodeBetween(aId: number, bId: number, t: number): number {
     const a = this.node(aId);
     const b = this.node(bId);
     const homePts = this.edgePoints(a, b, "home");
@@ -454,6 +516,13 @@ export class MeshWarpGrid {
     const dh = deCasteljau(homePts[0], homePts[1], homePts[2], homePts[3], t);
     const dp = deCasteljau(posPts[0], posPts[1], posPts[2], posPts[3], t);
 
+    // a の b 方向ハンドル → L1 − P0 / b の a 方向ハンドル → R1 − P3 (部分曲線の第 2 制御点)
+    a.homeHandles.set(bId, subPt(lerpPt(homePts[0], homePts[1], t), homePts[0]));
+    a.posHandles.set(bId, subPt(lerpPt(posPts[0], posPts[1], t), posPts[0]));
+    b.homeHandles.set(aId, subPt(lerpPt(homePts[2], homePts[3], t), homePts[3]));
+    b.posHandles.set(aId, subPt(lerpPt(posPts[2], posPts[3], t), posPts[3]));
+
+    // 新ノード m: 分割点 C。両方向のハンドルは L2 − C / R2 − C
     const id = this.nextId++;
     this.nodes.set(id, {
       id,
@@ -468,92 +537,32 @@ export class MeshWarpGrid {
         [bId, subPt(dp.r2, dp.c)],
       ]),
     });
-
-    // 元の両端ノードのハンドル (分割前の第 2 制御点 P1 / P2) はそのまま前半 / 後半で使えるため更新不要
-    this.insertIntoChains(aId, bId, id);
+    // エッジ (a→b) が (a→m) と (m→b) に分かれるため、a / b のハンドルキーを m.id へ付け替える
+    this.renameHandle(a, bId, id);
+    this.renameHandle(b, aId, id);
     return id;
   }
 
-  /** hitEdge の結果でエッジを分割する */
-  splitEdgeHit(hit: MwEdgeHit): number {
-    return this.splitEdgeAt(hit.aId, hit.bId, hit.t);
-  }
-
-  /** 全パッチの chain のうち (a→b) / (b→a) の連続ペアを (a→m→b) に置換する */
-  private insertIntoChains(aId: number, bId: number, mId: number): void {
-    for (const patch of this.patches) {
-      for (const side of MW_SIDES) {
-        const chain = patch[side];
-        for (let i = 0; i < chain.length - 1; i++) {
-          if (chain[i] === aId && chain[i + 1] === bId) {
-            chain.splice(i + 1, 0, mId);
-            break;
-          }
-          if (chain[i] === bId && chain[i + 1] === aId) {
-            chain.splice(i + 1, 0, mId);
-            break;
-          }
-        }
-      }
+  /** ノード n が保持する「oldId 方向のハンドル」のキーを newId へ付け替える (ハンドル値は不変) */
+  private renameHandle(n: MwNode, oldId: number, newId: number): void {
+    const p = n.posHandles.get(oldId);
+    if (p) {
+      n.posHandles.delete(oldId);
+      n.posHandles.set(newId, p);
+    }
+    const h = n.homeHandles.get(oldId);
+    if (h) {
+      n.homeHandles.delete(oldId);
+      n.homeHandles.set(newId, h);
     }
   }
 
-  /**
-   * パッチを (u, v) を通る縦横 2 本のラインで 4 分割する (仕様 3.3)。
-   * 4 辺に新ノードを追加し (隣接パッチの chain も連動更新)、中心に新ノードを置く。
-   */
-  splitPatch(patch: MwPatch, u: number, v: number): void {
-    const cu = clamp01(u);
-    const cv = clamp01(v);
-    const tId = this.splitEdgeOnChain(patch, "top", cu);
-    const bId = this.splitEdgeOnChain(patch, "bottom", cu);
-    const lId = this.splitEdgeOnChain(patch, "left", cv);
-    const rId = this.splitEdgeOnChain(patch, "right", cv);
-
-    // 中心ノード (home / pos 両空間のクーンズパッチ評価)
-    const homeC = this.evaluatePatch(patch, cu, cv, "home");
-    const posC = this.evaluatePatch(patch, cu, cv, "pos");
-    const cId = this.nextId++;
-    this.nodes.set(cId, {
-      id: cId,
-      home: homeC,
-      pos: posC,
-      homeHandles: new Map(),
-      posHandles: new Map(),
-    });
-
-    // 分割後の chain (insertIntoChains で各 chain に新ノードが挿入済み)
-    const topA = patch.top.slice(0, patch.top.indexOf(tId) + 1);
-    const topB = patch.top.slice(patch.top.indexOf(tId));
-    const bottomA = patch.bottom.slice(0, patch.bottom.indexOf(bId) + 1);
-    const bottomB = patch.bottom.slice(patch.bottom.indexOf(bId));
-    const leftA = patch.left.slice(0, patch.left.indexOf(lId) + 1);
-    const leftB = patch.left.slice(patch.left.indexOf(lId));
-    const rightA = patch.right.slice(0, patch.right.indexOf(rId) + 1);
-    const rightB = patch.right.slice(patch.right.indexOf(rId));
-
-    const idx = this.patches.indexOf(patch);
-    const tlPatch: MwPatch = { tl: patch.tl, tr: tId, br: cId, bl: lId, top: topA, right: [tId, cId], bottom: [lId, cId], left: leftA };
-    const trPatch: MwPatch = { tl: tId, tr: patch.tr, br: rId, bl: cId, top: topB, right: rightA, bottom: [cId, rId], left: [tId, cId] };
-    const blPatch: MwPatch = { tl: lId, tr: cId, br: bId, bl: patch.bl, top: [lId, cId], right: [cId, bId], bottom: bottomA, left: leftB };
-    const brPatch: MwPatch = { tl: cId, tr: rId, br: patch.br, bl: bId, top: [cId, rId], right: rightB, bottom: bottomB, left: [cId, bId] };
-    this.patches.splice(idx, 1, tlPatch, trPatch, blPatch, brPatch);
-  }
-
-  /** パッチの指定辺をパラメータ u (chain 全体基準) で分割する → 新ノード ID */
-  private splitEdgeOnChain(patch: MwPatch, side: MwSide, u: number): number {
-    const chain = patch[side];
-    const ranges = this.chainRanges(chain);
-    const uu = clamp01(u);
-    for (let i = 0; i < ranges.length; i++) {
-      const r = ranges[i];
-      if (uu <= r.start + r.width + 1e-9) {
-        const t = r.width > 1e-12 ? clamp01((uu - r.start) / r.width) : 0.5;
-        return this.splitEdgeAt(r.a.id, r.b.id, t);
-      }
+  /** ノード id の行列位置 [行, 列] (見つからない場合は [-1, -1]) */
+  private indexOfNode(id: number): [number, number] {
+    for (let r = 0; r < this.rowCount; r++) {
+      const c = this.rows[r].indexOf(id);
+      if (c >= 0) return [r, c];
     }
-    // u ≈ 1 は最終セグメントの終端側で分割
-    const last = ranges[ranges.length - 1];
-    return this.splitEdgeAt(last.a.id, last.b.id, 0.999999);
+    return [-1, -1];
   }
 }

@@ -33,8 +33,24 @@ function onKeyDown(e: KeyboardEvent): void {
   if (e.key === "Alt") interaction.altKey = true;
   const k = e.key.toLowerCase();
 
-  if ((e.ctrlKey || e.metaKey) && k === "z") { e.preventDefault(); if (e.shiftKey) history.redo(); else history.undo(); return; }
-  if ((e.ctrlKey || e.metaKey) && k === "y") { e.preventDefault(); history.redo(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === "z") {
+    e.preventDefault();
+    // メッシュワープセッション中はセッション内の Undo/Redo を優先 (確定前の状態をドキュメント履歴に触らせない)
+    if (meshWarpSession.active) {
+      if (e.shiftKey) meshWarpSession.redo();
+      else meshWarpSession.undo();
+      return;
+    }
+    if (e.shiftKey) history.redo();
+    else history.undo();
+    return;
+  }
+  if ((e.ctrlKey || e.metaKey) && k === "y") {
+    e.preventDefault();
+    if (meshWarpSession.active) { meshWarpSession.redo(); return; }
+    history.redo();
+    return;
+  }
   if ((e.ctrlKey || e.metaKey) && k === "a") { e.preventDefault(); selectAll(); return; }
   if ((e.ctrlKey || e.metaKey) && k === "d") { e.preventDefault(); deselect(); return; }
   if ((e.ctrlKey || e.metaKey) && k === "c") { e.preventDefault(); copySelection(); return; }

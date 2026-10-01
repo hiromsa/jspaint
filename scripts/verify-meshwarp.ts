@@ -14,7 +14,7 @@ import { existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
 
-import { MeshWarpGrid, bezierAt, deCasteljau, edgeDragWeights, subPt, addPt } from "../src/meshwarp/meshGrid";
+import { MeshWarpGrid, bezierAt, deCasteljau, edgeDragWeights, subPt, addPt, lerpPt } from "../src/meshwarp/meshGrid";
 import type { Pt } from "../src/core/types";
 
 /* ================================================================== *
@@ -65,65 +65,73 @@ const nearPt = (p: Pt, q: Pt, eps = 1e-4): boolean => near(p.x, q.x, eps) && nea
   grid.setHandle(p.tl, p.tr, { x: 30, y: -40 });
   grid.setHandle(p.tr, p.tl, { x: -30, y: -40 });
   const [q0, q1, q2, q3] = grid.edgePoints(grid.node(p.tl), grid.node(p.tr), "pos");
-  check("Coons: ハンドル付き C_top(0.5) がベジェと一致", nearPt(grid.evaluateChain(p.top, 0.5, "pos"), bezierAt(q0, q1, q2, q3, 0.5)));
+  check("Coons: ハンドル付き C_top(0.5) がベジェと一致", nearPt(grid.evaluateEdge(p.tl, p.tr, 0.5, "pos"), bezierAt(q0, q1, q2, q3, 0.5)));
   // 終端はノードのまま
-  check("Coons: C_top(0) / C_top(1) はコーナー", nearPt(grid.evaluateChain(p.top, 0, "pos"), { x: 0, y: 0 }) && nearPt(grid.evaluateChain(p.top, 1, "pos"), { x: 100, y: 0 }));
+  check("Coons: C_top(0) / C_top(1) はコーナー", nearPt(grid.evaluateEdge(p.tl, p.tr, 0, "pos"), { x: 0, y: 0 }) && nearPt(grid.evaluateEdge(p.tl, p.tr, 1, "pos"), { x: 100, y: 0 }));
   // Coons パッチの (u,0) は上エッジ上の点と一致 (パッチ境界 = エッジ曲線)
-  check("Coons: パッチ境界 S(0.5,0) = C_top(0.5)", nearPt(grid.evaluatePatch(p, 0.5, 0, "pos"), grid.evaluateChain(p.top, 0.5, "pos")));
+  check("Coons: パッチ境界 S(0.5,0) = C_top(0.5)", nearPt(grid.evaluatePatch(p, 0.5, 0, "pos"), grid.evaluateEdge(p.tl, p.tr, 0.5, "pos")));
 }
 
-/* --- 4. ド・カステリョ分割: 曲線形状の不変性 --- */
+/* --- 4. ド・カステリョ分割 (列挿入): 曲線形状の不変性 --- */
 {
   const grid = MeshWarpGrid.createRect(0, 0, 200, 100);
   const p = grid.patches[0];
   grid.setHandle(p.tl, p.tr, { x: 60, y: -80 });
   grid.setHandle(p.tr, p.tl, { x: -20, y: -50 });
 
-  const mId = grid.splitEdgeAt(p.tl, p.tr, 0.37);
-  check("splitEdge: ノード追加", grid.nodes.size === 5, `got ${grid.nodes.size}`);
-  check("splitEdge: chain が [tl, m, tr] に更新", p.top.length === 3 && p.top[1] === mId, p.top.join(","));
-
-  // 分割後の chain をサンプリングした点は、分割前の曲線上に載る (De Casteljau は形状不変)。
-  // ※ u の意味は分割で弧長比例に再配分されるため「同一 u で同一点」ではない点に注意。
-  const dense = Array.from({ length: 201 }, (_, i) => grid.evaluateChain(p.top, i / 200, "pos"));
-  const afterSamples = [0.02, 0.15, 0.37, 0.5, 0.63, 0.86, 0.98].map((u) => grid.evaluateChain(p.top, u, "pos"));
-  const onCurve = afterSamples.every((a) => dense.some((d) => nearPt(d, a, 1e-6)));
-  check("splitEdge: 分割後の曲線点が元曲線上に載る (pos)", onCurve);
-  const denseHome = Array.from({ length: 101 }, (_, i) => grid.evaluateChain(p.top, i / 100, "home"));
-  const afterHome = [0, 0.4, 0.8, 1].map((u) => grid.evaluateChain(p.top, u, "home"));
-  check("splitEdge: 分割後の曲線点が元曲線上に載る (home)", afterHome.every((a) => denseHome.some((d) => nearPt(d, a, 1e-6))));
-
-  // 新ノードのハンドル: 前半の L2 / 後半の R2 と一致する (仕様 4.2)
+  // 分割前の上エッジ (曲線) の密サンプリングと制御点
+  const dense = Array.from({ length: 201 }, (_, i) => grid.evaluateEdge(p.tl, p.tr, i / 200, "pos"));
+  const denseHome = Array.from({ length: 101 }, (_, i) => grid.evaluateEdge(p.tl, p.tr, i / 100, "home"));
   const [p0, p1, p2, p3] = grid.edgePoints(grid.node(p.tl), grid.node(p.tr), "pos");
-  const dc = deCasteljau(p0, p1, p2, p3, 0.37);
-  check("splitEdge: 新ノード pos = C(t)", nearPt(grid.nodePos(mId, "pos"), dc.c, 1e-9));
-  const m = grid.node(mId);
-  check("splitEdge: 新ハンドル = L2 - C / R2 - C", nearPt(m.posHandles.get(p.tl)!, subPt(dc.l2, dc.c), 1e-9) && nearPt(m.posHandles.get(p.tr)!, subPt(dc.r2, dc.c), 1e-9));
-}
 
-/* --- 5. 隣接パッチの chain 連動 --- */
-{
-  const grid = new MeshWarpGrid();
-  // 2 パッチ (上下で 1 エッジを共有) を手動構築
-  const tl = gridAdd(grid, 0, 0), tr = gridAdd(grid, 100, 0), br = gridAdd(grid, 100, 100), bl = gridAdd(grid, 0, 100);
-  const ml = gridAdd(grid, 0, 200), mr = gridAdd(grid, 100, 200);
-  (grid as unknown as { patches: unknown[] }).patches.push(
-    { tl, tr, br, bl, top: [tl, tr], right: [tr, br], bottom: [bl, br], left: [tl, bl] },
-    { tl: bl, tr: br, br: mr, bl: ml, top: [bl, br], right: [br, mr], bottom: [ml, mr], left: [ml, bl] },
+  grid.splitColumnAt(0, 0.37);
+  check("splitColumn: 列が 1 つ増える (colCount 3)", grid.colCount === 3, `got ${grid.colCount}`);
+  check("splitColumn: 全行に新ノードが挿入 (貫通)", grid.rows[0].length === 3 && grid.rows[1].length === 3);
+  check("splitColumn: ノード追加 (4+2)", grid.nodes.size === 6, `got ${grid.nodes.size}`);
+  check("splitColumn: パッチが 2 つに", grid.patches.length === 2, `got ${grid.patches.length}`);
+
+  // 分割後の上エッジ (行 0 の 2 セグメント) の合成点列が、分割前の曲線上に載る
+  const [tl, m, tr] = grid.rows[0];
+  const afterSamples = [0.02, 0.15, 0.37, 0.5, 0.63, 0.86, 0.98].map((u) =>
+    u <= 0.37 ? grid.evaluateEdge(tl, m, u / 0.37, "pos") : grid.evaluateEdge(m, tr, (u - 0.37) / 0.63, "pos"),
   );
-  const hit = grid.hitEdge({ x: 37, y: 100 }, 5);
-  check("hitEdge: 共有エッジ上を検出", !!hit && hit.aId + hit.bId === bl + br);
-  grid.splitEdgeHit(hit!);
-  const p0 = grid.patches[0], p1 = grid.patches[1];
-  check("splitEdge: 上パッチの chain が更新", p0.bottom.length === 3);
-  check("splitEdge: 下パッチの chain も連動更新", p1.top.length === 3 && p1.top[1] === p0.bottom[1]);
+  check("splitColumn: 分割後の曲線点が元曲線上に載る (pos)", afterSamples.every((a) => dense.some((d) => nearPt(d, a, 1e-6))));
+  const afterHome = [0.2, 0.5, 0.8].map((u) =>
+    u <= 0.37 ? grid.evaluateEdge(tl, m, u / 0.37, "home") : grid.evaluateEdge(m, tr, (u - 0.37) / 0.63, "home"),
+  );
+  check("splitColumn: 分割後の曲線点が元曲線上に載る (home)", afterHome.every((a) => denseHome.some((d) => nearPt(d, a, 1e-6))));
+
+  // 新ノードのハンドル: 前半の L2 / 後半の R2 と一致する (仕様 4.2)。既存ノードのハンドルは部分曲線の制御点 (L1 / R1) へ更新される
+  const dc = deCasteljau(p0, p1, p2, p3, 0.37);
+  const [l1Pos, r1Pos] = [lerpPt(p0, p1, 0.37), lerpPt(p2, p3, 0.37)];
+  check("splitColumn: 新ノード pos = C(t)", nearPt(grid.nodePos(m, "pos"), dc.c, 1e-9));
+  const mn = grid.node(m);
+  check("splitColumn: 新ハンドル = L2 - C / R2 - C", nearPt(mn.posHandles.get(p.tl)!, subPt(dc.l2, dc.c), 1e-9) && nearPt(mn.posHandles.get(p.tr)!, subPt(dc.r2, dc.c), 1e-9));
+  // 両端ノードのハンドルは部分曲線の制御点 (L1 − P0 / R1 − P3) へ更新される (元曲線を継承)
+  check("splitColumn: 両端ノードのハンドル = 部分曲線の制御点", nearPt(grid.node(tl).posHandles.get(m)!, subPt(l1Pos, p0), 1e-9) && nearPt(grid.node(tr).posHandles.get(m)!, subPt(r1Pos, p3), 1e-9));
 }
 
-/* --- 6. パッチの 4 分割 --- */
+/* --- 5. ライン追加はグリッド全体に貫通する --- */
+{
+  // 3x2 ノード (2x1 パッチ) まで細分化したグリッドを作る
+  const grid = MeshWarpGrid.createRect(0, 0, 200, 100);
+  grid.splitColumnAt(0, 0.5);
+  check("貫通の前提: 2 列パッチ (3x2 ノード)", grid.colCount === 3 && grid.rowCount === 2 && grid.patches.length === 2);
+
+  // 右パッチ内の点 (150, 50) をダブルクリック相当で分割 → ラインが左パッチにも貫通する
+  const hit = grid.patchAt({ x: 150, y: 50 });
+  check("貫通: 右パッチ内の点を特定", !!hit);
+  grid.splitPatchAt(hit!.patch, hit!.u, hit!.v);
+  check("貫通: 列挿入で colCount 4 / 行挿入で rowCount 3", grid.colCount === 4 && grid.rowCount === 3, `cols=${grid.colCount} rows=${grid.rowCount}`);
+  check("貫通: パッチ数 6 (3x2)", grid.patches.length === 6, `got ${grid.patches.length}`);
+  check("貫通: ノード数 12", grid.nodes.size === 12, `got ${grid.nodes.size}`);
+}
+
+/* --- 6. パッチの縦横ライン分割 (splitPatchAt) --- */
 {
   const grid = MeshWarpGrid.createRect(0, 0, 100, 100);
   const p = grid.patches[0];
-  grid.splitPatch(p, 0.5, 0.5);
+  grid.splitPatchAt(p, 0.5, 0.5);
   check("splitPatch: 1 パッチ → 4 パッチ", grid.patches.length === 4, `got ${grid.patches.length}`);
   check("splitPatch: ノード数 9 (4+4+1)", grid.nodes.size === 9, `got ${grid.nodes.size}`);
   // 直線エッジ (双線形) のとき、分割パッチの評価は元パッチの対応位置と一致する
@@ -131,13 +139,31 @@ const nearPt = (p: Pt, q: Pt, eps = 1e-4): boolean => near(p.x, q.x, eps) && nea
   check("splitPatch: TL パッチ中心 = 元パッチ (0.25,0.25)", nearPt(grid.evaluatePatch(q, 0.5, 0.5, "pos"), { x: 25, y: 25 }, 1e-6));
   const brPatch = grid.patches[3];
   check("splitPatch: BR パッチ中心 = 元パッチ (0.75,0.75)", nearPt(grid.evaluatePatch(brPatch, 0.5, 0.5, "pos"), { x: 75, y: 75 }, 1e-6));
-  // 全パッチの 4 辺は閉じている (chain の両端 = corners)
+  // 行列の全ノードが nodes に存在し、パッチの 4 辺はコーナーで閉じる
+  const allKnown = grid.rows.flat().every((id) => grid.nodes.has(id));
   const closed = grid.patches.every((pa) =>
     pa.top[0] === pa.tl && pa.top[pa.top.length - 1] === pa.tr &&
     pa.right[0] === pa.tr && pa.right[pa.right.length - 1] === pa.br &&
     pa.bottom[0] === pa.bl && pa.bottom[pa.bottom.length - 1] === pa.br &&
     pa.left[0] === pa.tl && pa.left[pa.left.length - 1] === pa.bl);
-  check("splitPatch: 全パッチの辺がコーナーで閉じる", closed);
+  check("splitPatch: 全パッチの辺がコーナーで閉じる", closed && allKnown);
+}
+
+/* --- 6b. 行挿入 (splitRowAt) と clone --- */
+{
+  const grid = MeshWarpGrid.createRect(0, 0, 100, 100);
+  grid.splitRowAt(0, 0.25);
+  check("splitRow: 行が 1 つ増える (rowCount 3)", grid.rowCount === 3, `got ${grid.rowCount}`);
+  check("splitRow: 全列に新ノード (貫通)", grid.rows[1].length === 2 && grid.patches.length === 2);
+  // 挿入位置: t=0.25 なので新行の y = 25
+  const mid = grid.nodePos(grid.rows[1][0], "pos");
+  check("splitRow: 新行の位置 = home / pos とも t 地点", nearPt(mid, { x: 0, y: 25 }, 1e-9));
+
+  // clone: 深いコピーで独立していること (セッション内 Undo の前提)
+  const snapshot = grid.clone();
+  grid.moveNode(grid.rows[1][1], { x: 50, y: 50 });
+  check("clone: スナップショットは元の変更の影響を受けない", nearPt(snapshot.nodePos(snapshot.rows[1][1], "pos"), { x: 100, y: 25 }));
+  check("clone: 行列・ノード数が一致", snapshot.colCount === grid.colCount && snapshot.rowCount === grid.rowCount && snapshot.nodes.size === grid.nodes.size);
 }
 
 /* --- 7. エッジ直接ドラッグ (仕様 4.3): カーブ点がマウスに吸いつく --- */
@@ -254,12 +280,6 @@ async function doubleClick(page: Page, x: number, y: number): Promise<void> {
   }, x, y);
 }
 
-/** テストで手動構築したグリッドへノードを追加する (addNode は private のためキャスト) */
-function gridAdd(grid: MeshWarpGrid, x: number, y: number): number {
-  const priv = grid as unknown as { addNode(x: number, y: number): number };
-  return priv.addNode(x, y);
-}
-
 async function main(): Promise<void> {
   console.log(`\n[Part 1] pure logic: ${pass} passed, ${fail} failed`);
   if (!existsSync(distFile)) {
@@ -309,6 +329,25 @@ async function main(): Promise<void> {
     await page.mouse.up();
     await new Promise((r) => setTimeout(r, 250));
 
+    // セッション中 (確定前) も変形プレビューが表示される
+    const preview = await viewPixel(page, 0, 0);
+    ok("ドラッグ後 (セッション中) に変形プレビューが表示される", colorDiff(baseline, preview) > 4, `diff=${colorDiff(baseline, preview)}`);
+
+    /* --- Ctrl+Z でセッション内 Undo / Ctrl+Y で Redo --- */
+    await page.keyboard.down("Control");
+    await page.keyboard.press("z");
+    await page.keyboard.up("Control");
+    await new Promise((r) => setTimeout(r, 250));
+    const sessionUndone = await viewPixel(page, 0, 0);
+    ok("Ctrl+Z でセッション内の 1 操作を取り消し (元画像に戻る)", colorDiff(baseline, sessionUndone) <= 2, `diff=${colorDiff(baseline, sessionUndone)}`);
+
+    await page.keyboard.down("Control");
+    await page.keyboard.press("y");
+    await page.keyboard.up("Control");
+    await new Promise((r) => setTimeout(r, 250));
+    const sessionRedone = await viewPixel(page, 0, 0);
+    ok("Ctrl+Y でセッション内の操作をやり直し", colorDiff(baseline, sessionRedone) > 4, `diff=${colorDiff(baseline, sessionRedone)}`);
+
     /* --- Enter で確定 → レイヤーに焼き込まれる --- */
     await page.keyboard.press("Enter");
     await new Promise((r) => setTimeout(r, 250));
@@ -318,26 +357,26 @@ async function main(): Promise<void> {
     const after = await viewPixel(page, 0, 0);
     ok("エッジ変形の確定でドキュメント中心のピクセルが変化", colorDiff(baseline, after) > 4, `diff=${colorDiff(baseline, after)}`);
 
-    /* --- Ctrl+Z で元に戻る --- */
+    /* --- Ctrl+Z (ドキュメント履歴) で元に戻る --- */
     await page.keyboard.down("Control");
     await page.keyboard.press("z");
     await page.keyboard.up("Control");
     await new Promise((r) => setTimeout(r, 250));
     const undone = await viewPixel(page, 0, 0);
-    ok("Undo で元画像に戻る", colorDiff(baseline, undone) <= 2, `diff=${colorDiff(baseline, undone)}`);
+    ok("確定後に Ctrl+Z (ドキュメント履歴) で元画像に戻る", colorDiff(baseline, undone) <= 2, `diff=${colorDiff(baseline, undone)}`);
 
-    /* --- 再選択 → 上エッジダブルクリックでポイント追加 (ノードのない位置) --- */
+    /* --- 再選択 → 上エッジダブルクリックでライン追加 (ノードのない位置) --- */
     await page.click('[data-stack="puppet-warp,mesh-warp"] .toolstack__caret');
     await page.click('[data-stack="puppet-warp,mesh-warp"] .toolstack__pop [data-tool="mesh-warp"]');
     await new Promise((r) => setTimeout(r, 200));
     await doubleClick(page, sx(320), sy(0));
     await new Promise((r) => setTimeout(r, 200));
-    ok("エッジダブルクリックでポイントを追加", (await lastToast(page)).includes("エッジにポイントを追加しました"), `toast=${await lastToast(page)}`);
+    ok("エッジダブルクリックでラインを追加 (全体に貫通)", (await lastToast(page)).includes("ラインを追加しました"), `toast=${await lastToast(page)}`);
 
-    /* --- パッチ内ダブルクリックで 4 分割 --- */
-    await doubleClick(page, cx, cy);
+    /* --- 右上パッチ内ダブルクリックで縦横ライン追加 (ライン上でない位置) --- */
+    await doubleClick(page, sx(480), sy(160));
     await new Promise((r) => setTimeout(r, 200));
-    ok("パッチ内ダブルクリックで 4 分割", (await lastToast(page)).includes("パッチを 4 分割しました"), `toast=${await lastToast(page)}`);
+    ok("パッチ内ダブルクリックで縦横ラインを追加 (全体に貫通)", (await lastToast(page)).includes("縦横のラインを追加しました"), `toast=${await lastToast(page)}`);
 
     /* --- Esc で取消 --- */
     await page.keyboard.press("Escape");
