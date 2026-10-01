@@ -52,6 +52,14 @@ function onKeyDown(e: KeyboardEvent): void {
   if (e.altKey && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); fillSelection(); return; }
 
   if (e.key === " ") { e.preventDefault(); state.spacePan = true; $("#stage").style.cursor = "grab"; return; }
+  if (e.key === "Tab") {
+    // SAMマスク候補の循環切替 (ポイント指定中のみ)
+    if (samSelect.candidateCount > 0) {
+      e.preventDefault();
+      samSelect.cycleCandidate();
+    }
+    return;
+  }
   if (e.key === "Escape") {
     if (!($("#modal-export") as HTMLElement).hidden) { closeExport(); return; }
     // AIモデルセットアップモーダル (ダウンロード元の案内)

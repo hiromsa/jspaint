@@ -226,8 +226,8 @@ async function runE2E(): Promise<void> {
     ok("モデル未読み込みのクリックでセットアップモーダルが開く", await page.evaluate(() => !(document.querySelector("#modal-ai-model") as HTMLElement).hidden));
     const sources = await page.evaluate(() => [...document.querySelectorAll("#ai-source-list a.ai-source")].map((a) => (a as HTMLAnchorElement).href));
     ok(
-      "ダウンロード元リンクが2件表示される (エンコーダ / デコーダ)",
-      sources.length === 2 && sources[0].includes("vision_encoder.onnx") && sources[1].includes("prompt_encoder_mask_decoder.onnx"),
+      "ダウンロード元リンクが4件表示される (標準 SlimSAM / 高精度 SAM ViT-B)",
+      sources.length === 4 && sources[0].includes("slimsam-77-uniform") && sources[2].includes("sam-vit-base"),
       JSON.stringify(sources),
     );
     await page.keyboard.press("Escape");
@@ -248,7 +248,7 @@ async function runE2E(): Promise<void> {
     const modelInput = await page.$("#file-ai-model");
     await modelInput!.uploadFile(...stubFiles);
     const loaded = await waitForStatus(page, "利用可能");
-    ok("両モデルの読み込み後、ステータスが「利用可能」になる", loaded, `${await modelStatusText(page)} | ${consoleLog.slice(-4).join(" / ")}`);
+    ok("両モデルの読み込み後、ステータスが「利用可能」になる", loaded, `${await modelStatusText(page)} | ${consoleLog.filter((l) => l.includes("[dbg]")).join(" / ")}`);
 
     /* --- 4) クリックでポイント指定 → マスク (スタブは明るい領域 A∪B) が選択される --- */
     await markToasts(page);
@@ -262,6 +262,19 @@ async function runE2E(): Promise<void> {
     ok("矩形A が選択され塗りつぶされている", a1.blue > a1.total * 0.9, JSON.stringify(a1));
     ok("矩形B も同時に選択されている (スタブは明るい領域全体を返す)", b1.blue > b1.total * 0.9, JSON.stringify(b1));
     ok("背景は非選択", bg1.blue < 10, JSON.stringify(bg1));
+
+    /* --- 4b) マスク候補ボタン (Tab 相当) で候補を切替できる --- */
+    await page.click('#sam-candidates [data-cand="1"]');
+    const candHit = await waitForNewToast(page, "マスク候補 2");
+    ok(
+      "マスク候補 2 への切替トーストが出る",
+      candHit,
+      `${(await toastText(page)).slice(-100)} | ${consoleLog.filter((l) => l.includes("[dbg] setCandidate") || l.includes("pageerror")).join(" / ")}`,
+    );
+    const candActive = await page.evaluate(() => (document.querySelector('#sam-candidates [data-cand="1"]') as HTMLElement).classList.contains("is-active"));
+    ok("候補 2 ボタンがアクティブ表示になる", candActive);
+    await page.click('#sam-candidates [data-cand="0"]');
+    ok("候補 1 へ戻せる", await waitForNewToast(page, "マスク候補 1"), (await toastText(page)).slice(-120));
 
     /* --- 5) Esc でポイントをクリア (選択範囲は維持) --- */
     await undoOnce(page);

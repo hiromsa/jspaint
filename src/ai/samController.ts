@@ -4,7 +4,9 @@
  * Affinity のオブジェクト選択風の操作:
  *   - クリック       = 対象ポイントを追加 → マスクを即時更新 (選択範囲を置き換え)
  *   - Alt + クリック = 除外ポイントを追加 → マスクから領域を削る
- *   - Enter          = ポイントを確定して終了 / Esc = ポイントをクリア
+ *   - ドラッグ       = 範囲を囲んで選択 (コーナー2点 + 中心の3ポイントとして渡す)
+ *   - Enter          = ポイントを確定して終了 / Esc = ドラッグ中断 → ポイントをクリア
+ *   - SAM は 3 種のマスク候補を返すため、候補はパネル / Tab で切り替え可能
  *
  * 画像埋め込みは「ドキュメントサイズ + 編集リビジョン」をキーにキャッシュされ、
  * ポイントを動かす反復 (マスクの改善) ではデコーダのみ再実行するため高速。
@@ -25,6 +27,9 @@ export type AiModelState = "unloaded" | "loading" | "ready";
 /** 破綻したファイルを弾く下限 (極端に小さいファイル = 誤選択を拒否する) */
 const MIN_MODEL_BYTES = 256;
 
+/** クリックとドラッグを分ける移動量 (doc px) */
+const DRAG_THRESHOLD_DOC = 4;
+
 /** 1 フレーム待って Busy 表示を描画させる (推論はメインスレッドをブロックするため) */
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => {
@@ -32,6 +37,12 @@ function nextFrame(): Promise<void> {
       requestAnimationFrame(() => resolve());
     });
   });
+}
+
+/** デコード結果のマスク候補 1件分 (ドキュメント解像度のマスク canvas) */
+export interface SamCandidate {
+  canvas: HTMLCanvasElement;
+  iou: number;
 }
 
 class SamSelectController {
@@ -45,6 +56,9 @@ class SamSelectController {
   private embedding: { key: string; data: SamEmbeddings } | null = null;
   /** 現在指定中のポイント群 (ドキュメント座標) */
   private points: SamPoint[] = [];
+  /** デコード結果のマスク候補 (ドキュメント解像度・SAM は 3 件) */
+  private candidates: SamCandidate[] = [];
+  private candidateIndex = 0;
   /** ドラッグ (囲み選択) ジェスチャの状態 */
   private dragOrigin: { x: number; y: number } | null = null;
   private dragCurrent: { x: number; y: number } | null = null;
@@ -90,6 +104,32 @@ class SamSelectController {
     return this.dragOrigin !== null;
   }
 
+  /** デコード済みマスク候補の件数 */
+  get candidateCount(): number {
+    return this.candidates.length;
+  }
+
+  /** 選択中のマスク候補インデックス */
+  get candidateIndexValue(): number {
+    return this.candidateIndex;
+  }
+
+  /** マスク候補の IoU 一覧 (パネル表示用) */
+  get candidateIous(): number[] {
+    return this.candidates.map((c) => c.iou);
+  }
+
+  /** ドラッグ中のプレビュー矩形 (ドキュメント座標 / null = 非ドラッグ) */
+  get boxPreview(): { x0: number; y0: number; x1: number; y1: number } | null {
+    if (!this.dragOrigin || !this.dragCurrent) return null;
+    return {
+      x0: Math.min(this.dragOrigin.x, this.dragCurrent.x),
+      y0: Math.min(this.dragOrigin.y, this.dragCurrent.y),
+      x1: Math.max(this.dragOrigin.x, this.dragCurrent.x),
+      y1: Math.max(this.dragOrigin.y, this.dragCurrent.y),
+    };
+  }
+
   private notify(): void {
     this.onStatusChange?.();
   }
@@ -106,6 +146,7 @@ class SamSelectController {
         const [enc, dec] = await Promise.all([loadModel(SLIMSAM_ENCODER_KEY), loadModel(SLIMSAM_DECODER_KEY)]);
         this.encoderBuf = enc;
         this.decoderBuf = dec;
+        console.log("[dbg] warmup enc:", !!enc, "dec:", !!dec);
         if (!enc || !dec) return;
         this.segmenter = await SamSegmenter.create(new Uint8Array(enc), new Uint8Array(dec));
       } catch {
@@ -145,6 +186,7 @@ class SamSelectController {
         this.notify();
         for (const { file, key } of pending) {
           const buf = await file.arrayBuffer();
+          console.log("[dbg] save", key, buf.byteLength);
           await saveModel(key, buf);
           if (key === SLIMSAM_ENCODER_KEY) this.encoderBuf = buf;
           else this.decoderBuf = buf;
@@ -173,9 +215,10 @@ class SamSelectController {
     this.segmenter = next;
     this.embedding = null;
     this.points = [];
+    this.candidates = [];
+    this.candidateIndex = 0;
     if (withToast) hooks.toast("AIモデルを読み込みました — 被写体をクリックして選択", "ok");
   }
-
 
   /** キャッシュしたモデルを削除する */
   async forgetModel(): Promise<void> {
@@ -188,46 +231,12 @@ class SamSelectController {
     this.decoderBuf = null;
     this.embedding = null;
     this.points = [];
+    this.candidates = [];
+    this.candidateIndex = 0;
     this.notify();
     hooks.toast("AIモデルのキャッシュを削除しました", "info");
   }
 
-  /** クリックでポイントを追加し、マスクを更新する (positive=false で除外ポイント) */
-  async addPoint(docX: number, docY: number, positive: boolean): Promise<void> {
-    if (!this.segmenter || this.busy) return;
-    if (docX < 0 || docY < 0 || docX >= doc.width || docY >= doc.height) return;
-    this.busy = true;
-    this.notify();
-    try {
-      // 推論はメインスレッドをブロックするため、Busy 表示を先に描画させておく
-      await nextFrame();
-      // 先に埋め込みを用意する (ドキュメントが変わっていた場合は古いポイント座標がクリアされる)
-      const emb = await this.ensureEmbedding();
-      this.points.push({ x: docX, y: docY, positive });
-      const logits = await this.segmenter.decode(emb, this.points);
-      const mask = renderLogitsMask(logits.data, logits.width, logits.height, doc.width, doc.height);
-      // SAM のマスクはポイント全体から毎回再構成されるため、選択範囲は常に置き換える
-      selection.applySelection((g) => g.drawImage(mask, 0, 0), "new");
-      hooks.toast(`AI選択を更新 (IoU ${(logits.iou * 100).toFixed(0)}% · ポイント ${this.points.length}件)`, "ok");
-    } catch (e) {
-      this.points.pop(); // 失敗したポイントは取り除く (リトライ可能にする)
-      hooks.toast(`AI選択に失敗しました (${e instanceof Error ? e.message : "不明なエラー"})`, "info");
-    } finally {
-      this.busy = false;
-      this.notify();
-    }
-  }
-
-  /** ドラッグ (囲み選択) 中のプレビュー矩形 (ドキュメント座標 / null = 非ドラッグ) */
-  get boxPreview(): { x0: number; y0: number; x1: number; y1: number } | null {
-    if (!this.dragOrigin || !this.dragCurrent) return null;
-    return {
-      x0: Math.min(this.dragOrigin.x, this.dragCurrent.x),
-      y0: Math.min(this.dragOrigin.y, this.dragCurrent.y),
-      x1: Math.max(this.dragOrigin.x, this.dragCurrent.x),
-      y1: Math.max(this.dragOrigin.y, this.dragCurrent.y),
-    };
-  }
 
   /** ポインタ_DOWN: ドラッグ (囲み) ジェスチャの開始を記録する */
   pointerDown(p: { x: number; y: number }, positive: boolean): void {
@@ -262,7 +271,7 @@ class SamSelectController {
     this.dragCurrent = null;
     if (!origin || !this.segmenter || this.isBusy) return;
     const span = Math.max(Math.abs(p.x - origin.x), Math.abs(p.y - origin.y));
-    if (span < 4) {
+    if (span < DRAG_THRESHOLD_DOC) {
       void this.addPoint(p.x, p.y, this.gesturePositive);
       return;
     }
@@ -273,8 +282,32 @@ class SamSelectController {
     void this.applyBox(x0, y0, x1, y1, this.gesturePositive);
   }
 
-  /** 囲み範囲 (コーナー2点 + 中心) からマスクを生成する */
+  /** クリックでポイントを追加し、マスクを更新する (positive=false で除外ポイント) */
+  async addPoint(docX: number, docY: number, positive: boolean): Promise<void> {
+    if (!this.segmenter || this.busy) return;
+    if (docX < 0 || docY < 0 || docX >= doc.width || docY >= doc.height) return;
+    this.busy = true;
+    this.notify();
+    try {
+      // 推論はメインスレッドをブロックするため、Busy 表示を先に描画させておく
+      await nextFrame();
+      // 先に埋め込みを用意する (ドキュメントが変わっていた場合は古いポイント座標がクリアされる)
+      const emb = await this.ensureEmbedding();
+      this.points.push({ x: docX, y: docY, positive });
+      await this.decodeAndApply(emb, this.points, `ポイント ${this.points.length}件`);
+    } catch (e) {
+      this.points.pop(); // 失敗したポイントは取り除く (リトライ可能にする)
+      hooks.toast(`AI選択に失敗しました (${e instanceof Error ? e.message : "不明なエラー"})`, "info");
+    } finally {
+      this.busy = false;
+      this.notify();
+    }
+  }
+
+
+  /** ドラッグで囲んだ範囲からマスクを生成する (コーナー2点 + 中心の3ポイントとして渡す) */
   async applyBox(x0: number, y0: number, x1: number, y1: number, positive: boolean): Promise<void> {
+    if (!this.segmenter || this.busy) return;
     this.busy = true;
     this.notify();
     try {
@@ -286,10 +319,7 @@ class SamSelectController {
         { x: (x0 + x1) / 2, y: (y0 + y1) / 2, positive },
       ];
       this.points = pts;
-      const logits = await this.segmenter!.decode(emb, pts);
-      const mask = renderLogitsMask(logits.data, logits.width, logits.height, doc.width, doc.height);
-      selection.applySelection((g) => g.drawImage(mask, 0, 0), "new");
-      hooks.toast(`AI選択を更新 (IoU ${(logits.iou * 100).toFixed(0)}% · ドラッグ範囲)`, "ok");
+      await this.decodeAndApply(emb, pts, "ドラッグ範囲");
     } catch (e) {
       hooks.toast(`AI選択に失敗しました (${e instanceof Error ? e.message : "不明なエラー"})`, "info");
     } finally {
@@ -313,15 +343,55 @@ class SamSelectController {
     if (this.embedding?.key !== key) {
       // ドキュメントが変わったならポイント座標も無効になるためクリアする
       this.points = [];
+      this.candidates = [];
+      this.candidateIndex = 0;
       const data = await this.segmenter!.encode(doc.compositeCanvas());
       this.embedding = { key, data };
     }
     return this.embedding.data;
   }
+
+  /** デコード → 3 候補をドキュメント解像度のマスクに変換して保持し、IoU 最大の候補を選択範囲へ反映する */
+  private async decodeAndApply(emb: SamEmbeddings, pts: SamPoint[], hint: string): Promise<void> {
+    const logits = await this.segmenter!.decode(emb, pts);
+    this.candidates = logits.candidates.map((c) => ({
+      canvas: renderLogitsMask(c.data, logits.width, logits.height, doc.width, doc.height),
+      iou: c.iou,
+    }));
+    let best = 0;
+    this.candidates.forEach((c, i) => {
+      if (c.iou > this.candidates[best].iou) best = i;
+    });
+    this.candidateIndex = best;
+    this.applyCandidate();
+    hooks.toast(`AI選択を更新 (IoU ${(this.candidates[best].iou * 100).toFixed(0)}% · ${hint} · Tab で候補切替)`, "ok");
+  }
+
+  /** 指定インデックスのマスク候補を選択範囲へ適用する */
+  setCandidate(index: number): void {
+    console.log("[dbg] setCandidate", index, "count:", this.candidates.length, "cur:", this.candidateIndex);
+    if (index < 0 || index >= this.candidates.length || index === this.candidateIndex) return;
+    this.candidateIndex = index;
+    this.applyCandidate();
+    this.notify();
+    const c = this.candidates[index];
+    hooks.toast(`マスク候補 ${index + 1} を適用 (IoU ${(c.iou * 100).toFixed(0)}%)`, "info");
+  }
+
+  /** マスク候補を順に切り替える (Tab) */
+  cycleCandidate(): void {
+    if (this.candidates.length > 1) this.setCandidate((this.candidateIndex + 1) % this.candidates.length);
+  }
+
+  private applyCandidate(): void {
+    const c = this.candidates[this.candidateIndex];
+    if (!c) return;
+    selection.applySelection((g) => g.drawImage(c.canvas, 0, 0), "new");
+  }
 }
 
 /**
- * logits マスク (size×size) をドキュメント解像度へ拡大し、再二値化した白黒マスク canvas を返す。
+ * logits マスク (gridW×gridH) をドキュメント解像度へ拡大し、再二値化した白黒マスク canvas を返す。
  * マスクの確定は SAM の標準規則「logits > 0」。拡大はバイリニアで輪郭を滑らかにする。
  */
 function renderLogitsMask(logits: Float32Array, gridW: number, gridH: number, w: number, h: number): HTMLCanvasElement {

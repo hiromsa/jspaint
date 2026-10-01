@@ -292,6 +292,11 @@
 
           <div class="ctrl" data-show="ai-select">
             <div class="ctrl__label">SAMポイント <span class="ctrl__sub">クリック = 対象 / ドラッグ = 囲んで選択 / Alt+クリック = 除外 · Enter で確定</span></div>
+            <div class="seg" id="sam-candidates" role="group" aria-label="マスク候補 (Tab で切替)">
+              <button class="seg__btn" data-cand="0" title="マスク候補 1">候補 1</button>
+              <button class="seg__btn" data-cand="1" title="マスク候補 2">候補 2</button>
+              <button class="seg__btn" data-cand="2" title="マスク候補 3">候補 3</button>
+            </div>
             <div class="sel-actions">
               <button class="btn btn--ghost btn--sm" id="btn-sam-clear" title="指定したポイントをクリア (Esc) — 選択範囲は維持されます"><i data-icon="x"></i>ポイントをクリア</button>
             </div>
@@ -441,7 +446,7 @@
     <div class="statusbar__group">
       <span class="mono st-zoom" id="st-zoom">100%</span>
       <span class="vdiv"></span>
-      <span class="mono st-ver">JSPaint v0.2.19 · TypeScript</span>
+      <span class="mono st-ver">JSPaint v0.2.20 · TypeScript</span>
     </div>
   </footer>
 

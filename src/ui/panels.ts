@@ -4,7 +4,7 @@
  */
 import { mountIcons } from "../assets/icons";
 import { samSelect } from "../ai/samController";
-import { AI_MODEL_SOURCES } from "../ai/modelSources";
+import { AI_MODEL_SOURCES, AI_MODEL_SOURCES_HQ, type AiModelSource } from "../ai/modelSources";
 import { doc } from "../core/documentStore";
 import { MAX_BRUSH_SIZE, restoreToolSize, setBrushSize, state } from "../core/editorState";
 import { selection } from "../core/selectionStore";
@@ -68,19 +68,28 @@ export function closeAiModelSetup(): void {
 /** AIモデルのダウンロード元リンクを描画する (セットアップモーダル / src/ai/modelSources.ts のデータ) */
 function renderAiSources(container: HTMLElement): void {
   container.innerHTML = "";
-  for (const source of AI_MODEL_SOURCES) {
-    const a = document.createElement("a");
-    a.className = "ai-source";
-    a.href = source.url;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    a.title = `${source.url} を新しいタブで開く`;
-    a.innerHTML = `<span class="tag ${source.tagClass}"></span><span class="ai-source__body"><b></b><span class="mono ai-source__url"></span><span class="ai-source__note"></span></span>`;
-    (a.querySelector(".tag") as HTMLElement).textContent = source.tag;
-    (a.querySelector("b") as HTMLElement).textContent = source.label;
-    (a.querySelector(".ai-source__url") as HTMLElement).textContent = source.url;
-    (a.querySelector(".ai-source__note") as HTMLElement).textContent = source.note;
-    container.appendChild(a);
+  const group = (title: string, sources: AiModelSource[]): HTMLElement[] => {
+    const head = document.createElement("div");
+    head.className = "ai-source-group";
+    head.textContent = title;
+    const items = sources.map((source) => {
+      const a = document.createElement("a");
+      a.className = "ai-source";
+      a.href = source.url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.title = `${source.url} を新しいタブで開く`;
+      a.innerHTML = `<span class="tag ${source.tagClass}"></span><span class="ai-source__body"><b></b><span class="mono ai-source__url"></span><span class="ai-source__note"></span></span>`;
+      (a.querySelector(".tag") as HTMLElement).textContent = source.tag;
+      (a.querySelector("b") as HTMLElement).textContent = source.label;
+      (a.querySelector(".ai-source__url") as HTMLElement).textContent = source.url;
+      (a.querySelector(".ai-source__note") as HTMLElement).textContent = source.note;
+      return a;
+    });
+    return [head, ...items];
+  };
+  for (const el of [...group("標準 — SlimSAM (軽量・合計 40MB)", AI_MODEL_SOURCES), ...group("高精度 — SAM ViT-B (量子化・合計 118MB・任意)", AI_MODEL_SOURCES_HQ)]) {
+    container.appendChild(el);
   }
 }
 
@@ -94,6 +103,15 @@ export function syncAiModelStatus(): void {
   ($("#btn-ai-model-remove") as HTMLButtonElement).disabled = kind === "unloaded" && !samSelect.isBusy;
   ($("#btn-ai-model-load") as HTMLButtonElement).disabled = samSelect.isBusy;
   ($("#btn-sam-clear") as HTMLButtonElement).disabled = !samSelect.hasPoints;
+  // マスク候補ボタン (ポイント指定中のみ有効)
+  $$("#sam-candidates .seg__btn").forEach((b) => {
+    const i = Number((b as HTMLElement).dataset.cand);
+    const iou = samSelect.candidateIous[i];
+    b.textContent = iou !== undefined ? `候補 ${i + 1} · ${Math.round(iou * 100)}%` : `候補 ${i + 1}`;
+    (b as HTMLButtonElement).disabled = samSelect.candidateCount === 0;
+    b.classList.toggle("is-active", i === samSelect.candidateIndexValue);
+  });
+  $("#sam-candidates")?.classList.toggle("is-hidden", samSelect.candidateCount === 0);
   // 推論中はカーソルで待機を伝える (推論はメインスレッドで実行される)
   stage.style.cursor = samSelect.isBusy ? "wait" : TOOLS[state.tool].cursor;
 }
@@ -271,6 +289,9 @@ export function bindControls(): void {
   samSelect.onStatusChange = syncAiModelStatus;
   syncAiModelStatus();
   $("#btn-sam-clear").addEventListener("click", () => samSelect.resetPoints(true));
+  $$("#sam-candidates .seg__btn").forEach((b) =>
+    b.addEventListener("click", () => samSelect.setCandidate(Number((b as HTMLElement).dataset.cand ?? "0"))),
+  );
   $("#btn-ai-model-load").addEventListener("click", openAiModelPicker);
   $("#btn-ai-model-remove").addEventListener("click", () => void samSelect.forgetModel());
   ($("#file-ai-model") as HTMLInputElement).addEventListener("change", (e) => {

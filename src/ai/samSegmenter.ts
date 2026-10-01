@@ -40,13 +40,18 @@ export interface SamEmbeddings {
 }
 
 /** デコーダ出力の logits マスク (0 以下 = 非選択 / 0 超 = 選択) */
-export interface SamLogits {
-  /** width × height の logits (有効領域のみにクロップ済み) */
+/** デコーダ出力のマスク候補 1件分 */
+export interface SamMaskCandidate {
   data: Float32Array;
+  /** この候補の IoU スコア (モデル自己推定) */
+  iou: number;
+}
+
+/** デコーダ出力の logits マスク (有効領域のみにクロップ済み・SAM は 3 候補を返す) */
+export interface SamLogits {
+  candidates: SamMaskCandidate[];
   width: number;
   height: number;
-  /** 採用したマスクの IoU スコア */
-  iou: number;
 }
 
 /** ort セッション 2つを包んだ推論器 (UI に依存しない) */
@@ -119,27 +124,28 @@ export class SamSegmenter {
       input_labels: new ort.Tensor("int64", labels, [1, 1, n]),
     });
 
-    // IoU 最大のマスク候補を選ぶ
-    const ious = results.iou_scores.data as Float32Array;
-    let best = 0;
-    for (let i = 1; i < ious.length; i++) if (ious[i] > ious[best]) best = i;
-
     const masks = results.pred_masks as Tensor;
     const dims = masks.dims;
+    const nMasks = dims[dims.length - 3]; // SAM は 3 候補を返す
     const mh = dims[dims.length - 2];
     const mw = dims[dims.length - 1];
     const raw = masks.data as Float32Array;
-    const base = best * mh * mw;
     // 有効領域 (リサイズ後の領域 / 4) だけをクロップ (パディング部の logits は無意味)
     const gw = Math.max(1, Math.round((embeddings.rw / SAM_INPUT_SIZE) * mw));
     const gh = Math.max(1, Math.round((embeddings.rh / SAM_INPUT_SIZE) * mh));
-    const logits = new Float32Array(gw * gh);
-    for (let y = 0; y < gh; y++) {
-      for (let x = 0; x < gw; x++) {
-        logits[y * gw + x] = raw[base + y * mw + x];
+    const ious = results.iou_scores.data as Float32Array;
+    const candidates: SamMaskCandidate[] = [];
+    for (let k = 0; k < nMasks; k++) {
+      const logits = new Float32Array(gw * gh);
+      const base = k * mh * mw;
+      for (let y = 0; y < gh; y++) {
+        for (let x = 0; x < gw; x++) {
+          logits[y * gw + x] = raw[base + y * mw + x];
+        }
       }
+      candidates.push({ data: logits, iou: ious[k] ?? 0 });
     }
-    return { data: logits, width: gw, height: gh, iou: ious[best] };
+    return { candidates, width: gw, height: gh };
   }
 
   /** セッションを解放する (モデル削除 / 差し替え時) */
