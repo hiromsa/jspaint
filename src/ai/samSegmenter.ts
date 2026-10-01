@@ -2,12 +2,16 @@
  * ai/samSegmenter.ts — SlimSAM (Segment Anything Model 軽量版) の推論
  *
  * 2つの ONNX セッションを扱う:
- *   - vision_encoder:            合成画像 1024×1024 → 画像埋め込み (ドキュメント変更時の1回のみ)
+ *   - vision_encoder:            画像 1024×1024 → 画像埋め込み (ドキュメント変更時の1回のみ)
  *   - prompt_encoder_mask_decoder: 埋め込み + ポイント → マスク logits (クリックごとに高速に再実行)
  *
- * 前処理: 合成画像を 1024×1024 へリサイズし (x/255 − 0.5) / 0.5 で正規化 (SAM の標準前処理)。
- * ポイント座標は同じ 1024 空間へ線形変換して渡す。マスクの確定は「logits > 0」(SAM の標準規則)。
- * 出力は SAM 特有の複数マスク (3種) のため、IoU スコアが最大のものを採用する。
+ * 前処理は SAM 標準 (preprocessor_config.json 準拠):
+ *   - 最長辺を 1024 にリサイズ (アスペクト比維持)
+ *   - 1024×1024 へゼロパディング (正規化後の配列を 0 で埋める)
+ *   - ImageNet の mean/std で正規化 ((x/255 − mean) / std)
+ * ポイント座標は同じ 1024 空間へ線形変換して渡す。
+ * マスクの確定は「logits > 0」(SAM の標準規則)。出力は 3 種のマスク候補のため
+ * IoU スコアが最大のものを採用し、パディング領域を除いた有効領域だけを返す。
  */
 import { createCanvas } from "../core/canvasUtils";
 import type { InferenceSession, Tensor } from "onnxruntime-web/wasm";
@@ -16,26 +20,31 @@ import { loadOrt } from "./ortRuntime";
 /** モデル入力の1辺 (SAM の標準解像度) */
 export const SAM_INPUT_SIZE = 1024;
 
-/** 陽性 / 陰性ポイント */
+/** 陽性 / 陰性ポイント (1024 空間座標) */
 export interface SamPoint {
-  /** ドキュメント座標 */
   x: number;
   y: number;
   /** true = 対象 (陽性) / false = 除外 (陰性) */
   positive: boolean;
 }
 
-/** エンコーダ出力の埋め込み (デコーダ入力そのまま) */
+/** エンコーダ出力の埋め込み (デコーダ入力そのまま) と 座標変換情報 */
 export interface SamEmbeddings {
   embeddings: Tensor;
   positional: Tensor;
+  /** ドキュメント → 1024 空間のスケール係数 (最長辺を 1024 に合わせる) */
+  scale: number;
+  /** リサイズ後の有効領域 (1024 空間・残りはゼロパディング) */
+  rw: number;
+  rh: number;
 }
 
 /** デコーダ出力の logits マスク (0 以下 = 非選択 / 0 超 = 選択) */
 export interface SamLogits {
-  /** size × size の logits */
+  /** width × height の logits (有効領域のみにクロップ済み) */
   data: Float32Array;
-  size: number;
+  width: number;
+  height: number;
   /** 採用したマスクの IoU スコア */
   iou: number;
 }
@@ -59,40 +68,47 @@ export class SamSegmenter {
   /** 画像 (任意サイズ canvas) から埋め込みを計算する (ドキュメント変更時の1回のみ呼ぶ) */
   async encode(source: HTMLCanvasElement): Promise<SamEmbeddings> {
     const ort = await loadOrt();
-    const size = SAM_INPUT_SIZE;
-    const input = createCanvas(size, size);
-    const g = input.getContext("2d", { willReadFrequently: true })!;
-    g.drawImage(source, 0, 0, size, size);
-    const px = g.getImageData(0, 0, size, size).data;
+    const scale = SAM_INPUT_SIZE / Math.max(source.width, source.height);
+    const rw = Math.max(1, Math.round(source.width * scale));
+    const rh = Math.max(1, Math.round(source.height * scale));
+    const resized = createCanvas(rw, rh);
+    const g = resized.getContext("2d", { willReadFrequently: true })!;
+    g.drawImage(source, 0, 0, rw, rh);
+    const px = g.getImageData(0, 0, rw, rh).data;
 
-    // NCHW (1,3,1024,1024) へ展開。正規化は SAM 標準の (x/255 − 0.5) / 0.5
-    const plane = size * size;
-    const chw = new Float32Array(3 * plane);
-    for (let i = 0; i < plane; i++) {
-      chw[i] = (px[i * 4] / 255 - 0.5) / 0.5;
-      chw[plane + i] = (px[i * 4 + 1] / 255 - 0.5) / 0.5;
-      chw[plane * 2 + i] = (px[i * 4 + 2] / 255 - 0.5) / 0.5;
+    // NCHW (1,3,1024,1024)。有効領域のみ ImageNet mean/std で正規化し、パディング領域は 0 のまま
+    const mean = [0.485, 0.456, 0.406];
+    const std = [0.229, 0.224, 0.225];
+    const chw = new Float32Array(3 * SAM_INPUT_SIZE * SAM_INPUT_SIZE); // 0 埋め
+    for (let y = 0; y < rh; y++) {
+      for (let x = 0; x < rw; x++) {
+        const si = (y * rw + x) * 4;
+        const di = y * SAM_INPUT_SIZE + x;
+        chw[di] = (px[si] / 255 - mean[0]) / std[0];
+        chw[SAM_INPUT_SIZE * SAM_INPUT_SIZE + di] = (px[si + 1] / 255 - mean[1]) / std[1];
+        chw[2 * SAM_INPUT_SIZE * SAM_INPUT_SIZE + di] = (px[si + 2] / 255 - mean[2]) / std[2];
+      }
     }
-    const tensor = new ort.Tensor("float32", chw, [1, 3, size, size]);
+    const tensor = new ort.Tensor("float32", chw, [1, 3, SAM_INPUT_SIZE, SAM_INPUT_SIZE]);
     const results = await this.encoder.run({ pixel_values: tensor });
-    return { embeddings: results.image_embeddings, positional: results.image_positional_embeddings };
+    return { embeddings: results.image_embeddings, positional: results.image_positional_embeddings, scale, rw, rh };
   }
 
   /**
    * ポイント (1024 空間座標) からマスク logits を推論する。
-   * SAM は 3 種のマスク候補を出すため IoU スコア最大のものを採用する。
+   * SAM は 3 種のマスク候補を出すため IoU スコア最大のものを採用し、
+   * パディング領域を除いた有効領域 (rw/4 × rh/4) にクロップして返す。
    */
-  async decode(embeddings: SamEmbeddings, points: SamPoint[], docWidth: number, docHeight: number): Promise<SamLogits> {
+  async decode(embeddings: SamEmbeddings, points: { x: number; y: number; positive: boolean }[]): Promise<SamLogits> {
     const ort = await loadOrt();
     const n = points.length;
     if (n === 0) throw new Error("ポイントがありません");
 
-    // ドキュメント座標 → 1024 空間 (エンコーダ入力と同じ線形変換)
     const coords = new Float32Array(n * 2);
     const labels = new BigInt64Array(n);
     points.forEach((p, i) => {
-      coords[i * 2] = (p.x / docWidth) * SAM_INPUT_SIZE;
-      coords[i * 2 + 1] = (p.y / docHeight) * SAM_INPUT_SIZE;
+      coords[i * 2] = p.x;
+      coords[i * 2 + 1] = p.y;
       labels[i] = p.positive ? 1n : 0n;
     });
 
@@ -109,11 +125,21 @@ export class SamSegmenter {
     for (let i = 1; i < ious.length; i++) if (ious[i] > ious[best]) best = i;
 
     const masks = results.pred_masks as Tensor;
-    const [, , , mh, mw] = masks.dims;
+    const dims = masks.dims;
+    const mh = dims[dims.length - 2];
+    const mw = dims[dims.length - 1];
     const raw = masks.data as Float32Array;
-    const logits = new Float32Array(mh * mw);
-    logits.set(raw.subarray(best * mh * mw, (best + 1) * mh * mw));
-    return { data: logits, size: mh, iou: ious[best] };
+    const base = best * mh * mw;
+    // 有効領域 (リサイズ後の領域 / 4) だけをクロップ (パディング部の logits は無意味)
+    const gw = Math.max(1, Math.round((embeddings.rw / SAM_INPUT_SIZE) * mw));
+    const gh = Math.max(1, Math.round((embeddings.rh / SAM_INPUT_SIZE) * mh));
+    const logits = new Float32Array(gw * gh);
+    for (let y = 0; y < gh; y++) {
+      for (let x = 0; x < gw; x++) {
+        logits[y * gw + x] = raw[base + y * mw + x];
+      }
+    }
+    return { data: logits, width: gw, height: gh, iou: ious[best] };
   }
 
   /** セッションを解放する (モデル削除 / 差し替え時) */
@@ -122,3 +148,4 @@ export class SamSegmenter {
     await this.decoder.release();
   }
 }
+

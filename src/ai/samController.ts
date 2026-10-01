@@ -204,8 +204,8 @@ class SamSelectController {
       // 先に埋め込みを用意する (ドキュメントが変わっていた場合は古いポイント座標がクリアされる)
       const emb = await this.ensureEmbedding();
       this.points.push({ x: docX, y: docY, positive });
-      const logits = await this.segmenter.decode(emb, this.points, doc.width, doc.height);
-      const mask = renderLogitsMask(logits.data, logits.size, doc.width, doc.height);
+      const logits = await this.segmenter.decode(emb, this.points);
+      const mask = renderLogitsMask(logits.data, logits.width, logits.height, doc.width, doc.height);
       // SAM のマスクはポイント全体から毎回再構成されるため、選択範囲は常に置き換える
       selection.applySelection((g) => g.drawImage(mask, 0, 0), "new");
       hooks.toast(`AI選択を更新 (IoU ${(logits.iou * 100).toFixed(0)}% · ポイント ${this.points.length}件)`, "ok");
@@ -279,15 +279,15 @@ class SamSelectController {
     this.notify();
     try {
       await nextFrame();
-      await this.ensureEmbedding();
+      const emb = await this.ensureEmbedding();
       const pts: SamPoint[] = [
         { x: x0, y: y0, positive },
         { x: x1, y: y1, positive },
         { x: (x0 + x1) / 2, y: (y0 + y1) / 2, positive },
       ];
       this.points = pts;
-      const logits = await this.segmenter!.decode(this.embedding!.data, pts, doc.width, doc.height);
-      const mask = renderLogitsMask(logits.data, logits.size, doc.width, doc.height);
+      const logits = await this.segmenter!.decode(emb, pts);
+      const mask = renderLogitsMask(logits.data, logits.width, logits.height, doc.width, doc.height);
       selection.applySelection((g) => g.drawImage(mask, 0, 0), "new");
       hooks.toast(`AI選択を更新 (IoU ${(logits.iou * 100).toFixed(0)}% · ドラッグ範囲)`, "ok");
     } catch (e) {
@@ -324,11 +324,11 @@ class SamSelectController {
  * logits マスク (size×size) をドキュメント解像度へ拡大し、再二値化した白黒マスク canvas を返す。
  * マスクの確定は SAM の標準規則「logits > 0」。拡大はバイリニアで輪郭を滑らかにする。
  */
-function renderLogitsMask(logits: Float32Array, size: number, w: number, h: number): HTMLCanvasElement {
-  const small = createCanvas(size, size);
+function renderLogitsMask(logits: Float32Array, gridW: number, gridH: number, w: number, h: number): HTMLCanvasElement {
+  const small = createCanvas(gridW, gridH);
   const sg = small.getContext("2d")!;
-  const img = sg.createImageData(size, size);
-  for (let i = 0; i < logits.length; i++) {
+  const img = sg.createImageData(gridW, gridH);
+  for (let i = 0; i < gridW * gridH; i++) {
     const o = i * 4;
     img.data[o] = 255;
     img.data[o + 1] = 255;
@@ -341,7 +341,7 @@ function renderLogitsMask(logits: Float32Array, size: number, w: number, h: numb
   const og = out.getContext("2d")!;
   og.imageSmoothingEnabled = true;
   og.imageSmoothingQuality = "medium";
-  og.drawImage(small, 0, 0, w, h);
+  og.drawImage(small, 0, 0, gridW, gridH, 0, 0, w, h);
 
   // 拡大時の補間で生じた半透明エッジを二値化 (SelectionStore の白黒マスク規約に揃える)
   const scaled = og.getImageData(0, 0, w, h);

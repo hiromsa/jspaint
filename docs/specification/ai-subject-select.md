@@ -26,7 +26,7 @@ SlimSAM (Segment Anything Model 軽量版) をブラウザ内で推論し、ク�
 |---|---|
 | モデル | **SlimSAM-77-uniform** (Xenova/slimsam-77-uniform 変換版 / Apache-2.0) |
 | 構成 | `vision_encoder.onnx` (23MB) + `prompt_encoder_mask_decoder.onnx` (17MB) の **2ファイル** |
-| encoder 入力 | `pixel_values` `1×3×1024×1024` float32 — 合成画像を 1024×1024 へリサイズし `(x/255 − 0.5) / 0.5` で正規化 (SAM 標準) |
+| encoder 入力 | `pixel_values` `1×3×1024×1024` float32 — **最長辺を 1024 にリサイズ (アスペクト比維持) → 1024×1024 へゼロパディング → ImageNet の mean/std で正規化** (preprocessor_config.json 準拠) |
 | encoder 出力 | `image_embeddings` / `image_positional_embeddings` (`1×256×64×64`) |
 | decoder 入力 | `input_points` `1×1×N×2` (1024空間座標) / `input_labels` `1×1×N` int64 (1=陽性, 0=陰性) / 埋め込み ×2 |
 | decoder 出力 | `iou_scores` `1×1×3` / `pred_masks` `1×1×3×256×256` — **IoU 最大の候補を採用** |
@@ -71,13 +71,15 @@ SlimSAM (Segment Anything Model 軽量版) をブラウザ内で推論し、ク�
 
 ```
 [初回クリック時]
-compositeCanvas (表示合成) → 1024×1024 へリサイズ → (x/255 − 0.5) / 0.5 正規化 (NCHW)
-  → vision_encoder → 画像埋め込み (キャッシュ)
+compositeCanvas (表示合成) → 最長辺を 1024 にリサイズ (アスペクト比維持) → 1024×1024 へゼロパディング
+  → ImageNet の mean/std で正規化 (NCHW・パディング領域は 0)
+  → vision_encoder → 画像埋め込み + 座標変換情報 (scale / 有効領域) をキャッシュ
 
 [クリックごと]
-ポイント座標を 1024 空間へ線形変換 (docX × 1024 / docW)
+ポイント座標を 1024 空間へ線形変換 (docX × scale, docY × scale)
   → prompt_encoder_mask_decoder (埋め込み + input_points/labels) → IoU 最大の pred_masks
-  → logits > 0 で二値化 (256×256) → ドキュメント解像度へバイリニア拡大 → α≥128 で再二値化
+  → パディング領域を除いた有効グリッド (rw/4 × rh/4) にクロップ → logits > 0 で二値化
+  → ドキュメント解像度へバイリニア拡大 → α≥128 で再二値化
   → SelectionStore.applySelection (常に置き換え) → Marching Ants 反映
 ```
 
