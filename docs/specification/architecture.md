@@ -23,7 +23,8 @@ src/
     editorState.ts   ユーザー設定・ビュー状態 (state オブジェクト)
     interactionState.ts  ポインタ操作中の経過状態 (interaction オブジェクト)
     toolDefs.ts      ツールのメタ定義 (TOOLS / TOOL_ICON / KEY_TOOL / PAINT_TOOLS)
-    canvasUtils.ts   canvas 純粋ユーティリティ (clone / tintMask / floodMask / roundRectPath / hexA)
+    canvasUtils.ts   canvas 純粋ユーティリティ (clone / tintMask / floodMask / roundRectPath / hexA /
+                     regionBounds: 領域判定関数から外接矩形 — パペット / メッシュワープ共用)
                      ※ ドキュメント可変化のため createCanvas はサイズ必須・floodMask は引数 canvas からサイズ取得
     imageSource.ts   画像ソースの読み込み (File / Blob → canvas 化・非同期)
     clipboard.ts     選択範囲のコピー / 切り取り / 新規レイヤー貼り付け (内部クリップボード)
@@ -54,10 +55,18 @@ src/
     delaunay.ts      Bowyer-Watson 法による Delaunay 三角分割 (外部依存ゼロ)
     mesh.ts          メッシュ生成 (不透明領域 × 選択範囲 → グリッド + 輪郭点 → 三角分割) と
                      PuppetPin / PuppetMesh 型 (canvas 非依存・単体検証可)
-                     ※ buildMesh / regionBounds は走査範囲 (width / height) を引数で受ける (可変ドキュメント対応)
+                     ※ buildMesh は走査範囲 (width / height) を引数で受ける (可変ドキュメント対応)
     deformer.ts      MLS (Moving Least Squares) rigid 変形 — ピン移動から全頂点の変形先を計算
-    warpPaint.ts     三角形クリップ + アフィン変換で元画像を転写 (シーム防止パッド付き)
+    warpPaint.ts     変形メッシュに沿った転写 (三角形転写は rendering/triangleTransfer.ts 共用)
     warpSession.ts   セッション管理 (開始 / ピン操作 / プレビュー / commit・cancel / Undo 統合)
+
+  meshwarp/          メッシュワープ (ベジェメッシュによる面的歪み変形) の実装
+    meshGrid.ts      Node / Edge (chain) / Patch のデータ構造と数理ロジック
+                     (クーンズパッチ評価 / ド・カステリョ分割 / エッジ直接ドラッグの擬似逆行列分配 /
+                      ニュートン反復による逆写像) — canvas 非依存・単体検証可
+    warpPaint.ts     パッチを u / v 方向の小四角形に分割して「変形前 → 変形後」の対応三角形で転写
+                     (転写本体は rendering/triangleTransfer.ts 共用)
+    warpSession.ts   セッション管理 (開始 / ドラッグ種別 / 細分化 / プレビュー / commit・cancel / Undo 統合)
 
   ai/                AI被写体選択 (SlimSAM 対話セグメンテーション) の実装
     ortRuntime.ts    onnxruntime-web の遅延ロードと wasm / ローダー mjs の Blob URL 接続
@@ -69,7 +78,9 @@ src/
 
   rendering/         キャンバスへの描画
     renderer.ts      view canvas の管理と render() 本体
-    previews.ts      オーバーレイ (プレビュー / メッシュ・ピン / サイズバッジ / 円形カーソル)
+    previews.ts      オーバーレイ (プレビュー / メッシュ・ピン / メッシュワープのエッジ・ノード・ハンドル /
+                     サイズバッジ / 円形カーソル)
+    triangleTransfer.ts  src 三角形 → dst 三角形 のアフィン転写 (シーム防止パッド付き・パペット / メッシュ共用)
 
   interaction/       入力処理
     pointer.ts       ポインタイベントのツール別ディスパッチ / パン / ホイール
@@ -94,13 +105,16 @@ main.ts → app.ts ─┬→ ui/ ──────┐
                   ├→ interaction/ ──→ painting/ ─┐
                   ├→ rendering/ ────┘            ├→ core/
                   ├→ puppet/ ────────────────────┘
+                  ├→ meshwarp/ ──────────────────┘
                   └→ core/ ──────────────────────┘
 ```
 
 - **core は ui / rendering / interaction に依存しない** (DOM を触らない)。
-- **puppet/ は painting/ 同等のドメイン層**。interaction / rendering / ui から参照され、core へ依存する。
-  mesh.ts / delaunay.ts / deformer.ts は canvas 非依存の純粋ロジック (`scripts/verify-puppet.ts` を
-  `npm run test:puppet` で単体検証できる)。
+- **puppet/ / meshwarp/ は painting/ 同等のドメイン層**。interaction / rendering / ui から参照され、core へ依存する。
+  puppet/mesh.ts / delaunay.ts / deformer.ts、meshwarp/meshGrid.ts は canvas 非依存の純粋ロジック
+  (`scripts/verify-puppet.ts` / `scripts/verify-meshwarp.ts` を `npm run test:puppet` /
+  `npm run test:meshwarp` で単体検証できる)。両層とも `rendering/triangleTransfer.ts` の
+  三角形転写共用実装を使用する (機能層 → rendering の参照。双方向にはならない)。
 - core から UI 更新 (render / toast / パネル同期) を依頼する場合は **hooks** (`core/hooks.ts`) 経由。
   実装は `app.ts` の `startApp()` で `setHooks()` により差し込む (既定は no-op)。
 - 依存は上の層から下の層へ一方向。循環 import は存在しない
@@ -186,6 +200,17 @@ pointerup   → 後始末 → render()
 - **パペットワープのセッション分離** (`puppet/warpSession.ts`): 開始時に編集対象レイヤーの
   スナップショットを取り、プレビューはスナップショット上でのみ計算する。レイヤーの実ピクセルは
   commit (Enter / ツール切替時の自動確定) まで一切変更しないため、Undo エントリは確定時 1 回のみ。
+  メッシュワープ (`meshwarp/warpSession.ts`) も同一のセッションモデルに従う。
+- **メッシュワープは Coons パッチ + 共有 chain トポロジ** (v0.2.22):
+  - Patch は「4 コーナー Node + 4 辺の Node chain (両端含む)」で表現し、隣接パッチは chain を共有する。
+    エッジ分割 (ド・カステリョ) は chain を共有する隣接パッチへ連動し、曲線形状は常に不変。
+  - クーンズパッチ評価の u / v は **home 空間の弧長 (制御点折れ線近似) 比例**でセグメントに割り当て、
+    home / pos 両空間で同じ区間を使う (同じ u が両空間の対応点を指す)。
+  - ハンドル未設定の辺は「P1 = P0+Δ/3、P2 = P3−Δ/3」の制御点で**真の直線**として評価する
+    (P1 = P0 / P2 = P3 の 3 次ベジェは直線にならずパラメータが非線形になるため)。
+  - 転写はパッチを u / v グリッド (セグメント数に比例、4〜32 分割) でサンプリングし、
+    「home → pos」の対応三角形をアフィン転写する (MLS 三角形転写と共用の実装)。
+  - `T` キーはパペットワープ / メッシュワープで共有し (`KEY_TOGGLE_NEXT`)、押下ごとに相互切替する。
 - **フィルターペンの設定は全体フィルターと独立** (v0.2.3): 従来はフィルターペンがフィルタータブ
   (FilterEngine) の状態を共用していたため、「ペンだけ使いたいのにフィルターを ON にした瞬間に
   画像全体へプレビューがかかる / 確定 (ベイク) と干渉する」問題があった。
@@ -217,6 +242,13 @@ pointerup   → 後始末 → render()
 ## 6. 検証スクリプト
 
 - `npm run test:puppet` — パペットワープの pure ロジック (Delaunay / メッシュ / MLS) を node で単体検証 (25 ケース)。
+- `npm run test:meshwarp` — メッシュワープの検証 (合計 47 ケース / 2 パート構成)。
+  - Part 1: 純粋ロジック (クーンズパッチ評価 / ハンドル付きエッジ / ド・カステリョ分割の形状不変性 /
+    隣接パッチの chain 連動 / パッチ 4 分割 / エッジ直接ドラッグの「吸いつき」/ 逆写像の往復精度) を node で単体検証。
+  - Part 2: 実ブラウザ E2E (事前に `npm run build` が必要)。スタックポップからの選択 / セッション開始 /
+    エッジドラッグ → Enter 確定のピクセル変化 / Undo / ダブルクリックによる細分化 / Esc 取消 /
+    `T` キーでのパペット ⇔ メッシュワープ相互切替を検証する。
+    (puppeteer の `clickCount: 2` は dblclick を合成しないため、ダブルクリックは `dispatchEvent` で発火させる)
 - `npm run test:imageio` — 画像入出力とホストモードをヘッドレス Chrome / Edge で E2E 検証 (27 ケース相当)。
   - 事前に `npm run build` が必要。puppeteer-core (devDependencies) を使用し、
     インストール済みブラウザの実行ファイルを自動検出する (追加ダウンロード不要)。

@@ -17,6 +17,7 @@ import { markDirty, toast } from "../ui/feedback";
 import { openAiModelSetup } from "../ui/panels";
 import { render, view } from "../rendering/renderer";
 import { PIN_HIT_RADIUS, warpSession } from "../puppet/warpSession";
+import { meshWarpSession } from "../meshwarp/warpSession";
 import {
   BLOAT_HOLD_RATE,
   bloatSign,
@@ -107,6 +108,16 @@ function onPointerDown(e: PointerEvent): void {
         warpSession.addPin(d, e.altKey);
         if (e.altKey) toast("固定ピンを追加", "info");
       }
+      break;
+    }
+    case "mesh-warp": {
+      // セッションが無い (開始に失敗した / 空のレイヤー等) 場合は再試行
+      if (!meshWarpSession.active) {
+        meshWarpSession.start();
+        break;
+      }
+      // ハンドル → ノード選択 → エッジドラッグの優先順で判定 (セッション内)
+      meshWarpSession.beginDrag(d, state.zoom);
       break;
     }
     case "line":
@@ -244,6 +255,9 @@ function onPointerMove(e: PointerEvent): void {
   } else if (warpSession.dragPinId != null) {
     // パペットワープ: ドラッグ中ピンを追従させ、メッシュ変形プレビューを更新
     warpSession.moveDragPin(d);
+  } else if (meshWarpSession.drag) {
+    // メッシュワープ: ドラッグ種別 (ノード / ハンドル / エッジ) に応じてグリッドを更新
+    meshWarpSession.moveDrag(d);
   } else if (interaction.maskStroke) {
     selection.paintMaskSegment(interaction.maskStroke.last, d);
     interaction.maskStroke.last = d;
@@ -267,6 +281,12 @@ function onPointerMove(e: PointerEvent): void {
     const hit = warpSession.pickPin(d, PIN_HIT_RADIUS / state.zoom);
     warpSession.hoverPinId = hit?.id ?? null;
     stage.style.cursor = hit ? "pointer" : TOOLS[state.tool].cursor;
+  }
+
+  // メッシュワープ: ホバー中エッジの追跡 (強調表示) とカーソル形状のフィードバック
+  if (state.tool === "mesh-warp" && meshWarpSession.active) {
+    meshWarpSession.updateHover(d, state.zoom);
+    stage.style.cursor = meshWarpSession.hoverCursor(d, state.zoom);
   }
 
   render();
@@ -374,6 +394,7 @@ function onPointerUp(e: PointerEvent): void {
 
   stopBloatHold();
   warpSession.endDrag();
+  meshWarpSession.endDrag();
   interaction.strokeLast = null;
   interaction.retouchLast = null;
   interaction.filterPenLast = null;
@@ -452,6 +473,12 @@ export function bindCanvasEvents(): void {
       const d = screenToDoc(s.x, s.y);
       const hit = warpSession.pickPin(d, PIN_HIT_RADIUS / state.zoom);
       if (hit) warpSession.deletePin(hit.id);
+    }
+    // メッシュワープ: エッジ / パッチのダブルクリックで細分化
+    if (state.tool === "mesh-warp" && meshWarpSession.active) {
+      const s = localPos(e);
+      const d = screenToDoc(s.x, s.y);
+      meshWarpSession.handleDoubleTap(d, state.zoom);
     }
   });
 }

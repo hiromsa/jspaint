@@ -116,6 +116,8 @@ export class HistoryStack {
     hooks.syncToolGuide();
     hooks.renderLayers();
     hooks.updateUndoButtons();
+    // 復元直後のキャンバスを即座に再描画する (マウス操作など次の render を待たない)
+    hooks.render();
   }
 }
 

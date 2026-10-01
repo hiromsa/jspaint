@@ -12,13 +12,14 @@ import { samSelect } from "../ai/samController";
 import { deleteSelectionContents, deselect, fillSelection, selectAll } from "../core/selectionOps";
 import { copySelection, cutSelection } from "../core/clipboard";
 import { fitView, setZoom } from "../core/viewState";
-import { KEY_TOOL, TOOLS } from "../core/toolDefs";
+import { KEY_TOOL, KEY_TOGGLE_NEXT, TOOLS } from "../core/toolDefs";
 import { cancelPolygon, closePolygon } from "./pointer";
 import { setTool, syncSlider, swapColors, closeAiModelSetup } from "../ui/panels";
 import { closeExport, openExport } from "../ui/exportModal";
 import { imageIOActions } from "../ui/imageIO";
 import { hostMode } from "../ui/hostMode";
 import { warpSession } from "../puppet/warpSession";
+import { meshWarpSession } from "../meshwarp/warpSession";
 
 /** window へ keydown / keyup を配線する */
 export function bindKeyboard(): void {
@@ -69,6 +70,8 @@ function onKeyDown(e: KeyboardEvent): void {
     if (samSelect.hasPoints) { samSelect.resetPoints(true); return; }
     // パペットワープセッションの取消 (進行中の変形を破棄)
     if (warpSession.active) { warpSession.cancel(); return; }
+    // メッシュワープセッションの取消 (進行中の変形を破棄)
+    if (meshWarpSession.active) { meshWarpSession.cancel(); return; }
     if (interaction.polyDrag || interaction.polyPoints.length > 0) { cancelPolygon(); return; }
     if (interaction.lassoPath) { interaction.lassoPath = null; hooks.render(); hooks.toast("投げ縄選択を取消", "info"); return; }
     if (interaction.preview || interaction.dragStart) { interaction.preview = null; interaction.dragStart = null; hooks.render(); return; }
@@ -77,6 +80,8 @@ function onKeyDown(e: KeyboardEvent): void {
     return;
   }
   if (e.key === "Enter" && warpSession.active) { e.preventDefault(); warpSession.commit(); return; }
+  // メッシュワープセッションの確定 (変形をレイヤーへ焼き込み)
+  if (e.key === "Enter" && meshWarpSession.active) { e.preventDefault(); meshWarpSession.commit(); return; }
   // SAMポイントの確定 (選択範囲は既に反映済み。ポイント指定を終了する)
   if (e.key === "Enter" && samSelect.hasPoints) { samSelect.resetPoints(true); return; }
   if (e.key === "Enter" && state.tool === "polygon") { closePolygon(); return; }
@@ -86,7 +91,13 @@ function onKeyDown(e: KeyboardEvent): void {
   }
 
   if (e.ctrlKey || e.metaKey || e.altKey) return;
-  if (KEY_TOOL[k]) { setTool(KEY_TOOL[k]); return; }
+  if (KEY_TOOL[k]) {
+    const target = KEY_TOOL[k];
+    // 同一ショートカットを共有するツールスタック (パペット / メッシュワープ) は押下ごとに相互切替
+    const next = target === state.tool ? KEY_TOGGLE_NEXT[target] : undefined;
+    setTool(next ?? target);
+    return;
+  }
   if (k === "x") { swapColors(); return; }
   if (k === "[") { setBrushSize(state.brushSize - Math.max(1, Math.round(state.brushSize * 0.15))); syncSlider(); return; }
   if (k === "]") { setBrushSize(state.brushSize + Math.max(1, Math.round(state.brushSize * 0.15))); syncSlider(); return; }

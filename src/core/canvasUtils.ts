@@ -39,6 +39,34 @@ export function roundRectPath(g: CanvasRenderingContext2D, x: number, y: number,
   g.closePath();
 }
 
+/* ---------- 領域の外接矩形 (パペットワープ / メッシュワープ共用) ---------- */
+
+/** 変形対象領域の判定 (ピクセル座標 → 領域内かどうか) */
+export type MeshRegion = (x: number, y: number) => boolean;
+
+/** 領域の外接矩形。x1 / y1 は inclusive */
+export interface MeshBounds {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/** 領域の外接矩形を求める (走査範囲は width × height)。領域が空なら null */
+export function regionBounds(contains: MeshRegion, width: number, height: number): MeshBounds | null {
+  let x0 = width, y0 = height, x1 = -1, y1 = -1;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!contains(x, y)) continue;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  return x1 < x0 ? null : { x0, y0, x1, y1 };
+}
+
 /** #rrggbb → rgba(...) 文字列 */
 export function hexA(hex: string, a: number): string {
   const n = parseInt(hex.slice(1), 16);

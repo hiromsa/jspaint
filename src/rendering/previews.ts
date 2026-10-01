@@ -11,6 +11,8 @@ import { selection } from "../core/selectionStore";
 import { CIRCLE_CURSOR_TOOLS } from "../core/toolDefs";
 import { docToScreenX, docToScreenY, viewport } from "../core/viewState";
 import { warpSession } from "../puppet/warpSession";
+import { meshWarpSession } from "../meshwarp/warpSession";
+import { MW_SIDES } from "../meshwarp/meshGrid";
 
 export function drawStrokePreview(g: CanvasRenderingContext2D): void {
   if (!interaction.preview) return;
@@ -220,6 +222,81 @@ export function drawPuppetWarpOverlay(g: CanvasRenderingContext2D): void {
     g.fill();
     g.strokeStyle = isHot ? "#fbbf24" : "rgba(0, 0, 0, 0.85)";
     g.lineWidth = (isHot ? 2 : 1.5) / zoom;
+    g.stroke();
+    g.lineWidth = 1 / zoom;
+  }
+  g.restore();
+}
+
+/** メッシュワープのオーバーレイ (変形後エッジ曲線 + ノード + 選択ノードのハンドル) */
+export function drawMeshWarpOverlay(g: CanvasRenderingContext2D): void {
+  const s = meshWarpSession;
+  const grid = s.grid;
+  if (!s.active || !grid) return;
+  const zoom = state.zoom;
+  g.save();
+  g.lineWidth = 1 / zoom;
+
+  // エッジ曲線 (変形後 pos 空間のベジェ chain をまとめて 1 パスで描く)
+  g.strokeStyle = "rgba(147, 197, 253, 0.55)";
+  g.beginPath();
+  for (const patch of grid.patches) {
+    for (const side of MW_SIDES) {
+      const chain = patch[side];
+      const p0 = grid.nodePos(chain[0], "pos");
+      g.moveTo(p0.x, p0.y);
+      for (let i = 0; i < chain.length - 1; i++) {
+        const [, q1, q2, q3] = grid.edgePoints(grid.node(chain[i]), grid.node(chain[i + 1]), "pos");
+        g.bezierCurveTo(q1.x, q1.y, q2.x, q2.y, q3.x, q3.y);
+      }
+    }
+  }
+  g.stroke();
+
+  // ホバー / ドラッグ中のエッジを強調
+  const highlight = s.drag?.kind === "edge" ? s.drag.drag : s.hoverEdge;
+  if (highlight) {
+    const [h0, h1, h2, h3] = grid.edgePoints(grid.node(highlight.aId), grid.node(highlight.bId), "pos");
+    g.strokeStyle = "rgba(251, 191, 36, 0.95)";
+    g.lineWidth = 2 / zoom;
+    g.beginPath();
+    g.moveTo(h0.x, h0.y);
+    g.bezierCurveTo(h1.x, h1.y, h2.x, h2.y, h3.x, h3.y);
+    g.stroke();
+    g.lineWidth = 1 / zoom;
+  }
+
+  // ハンドル (選択ノードのもの=青 / 隣接ノードの対向=シアン。仮想表示は破線)
+  for (const h of s.visibleHandles()) {
+    const nodePos = grid.nodePos(h.nodeId, "pos");
+    const lineColor = h.opposite ? "rgba(103, 232, 249, 0.85)" : "rgba(147, 197, 253, 0.95)";
+    g.strokeStyle = h.virtual ? hexA("#93c5fd", 0.45) : lineColor;
+    g.setLineDash(h.virtual ? [3 / zoom, 3 / zoom] : []);
+    g.beginPath();
+    g.moveTo(nodePos.x, nodePos.y);
+    g.lineTo(h.point.x, h.point.y);
+    g.stroke();
+    g.setLineDash([]);
+    g.beginPath();
+    g.arc(h.point.x, h.point.y, 3.2 / zoom, 0, Math.PI * 2);
+    g.fillStyle = h.virtual ? "rgba(224, 242, 254, 0.65)" : "#e0f2fe";
+    g.fill();
+    g.strokeStyle = "rgba(0, 0, 0, 0.85)";
+    g.lineWidth = 1.2 / zoom;
+    g.stroke();
+    g.lineWidth = 1 / zoom;
+  }
+
+  // ノード (白点。選択中は黄縁)
+  for (const n of grid.nodes.values()) {
+    const r = 4 / zoom;
+    const isSel = n.id === s.selectedNodeId;
+    g.beginPath();
+    g.arc(n.pos.x, n.pos.y, r, 0, Math.PI * 2);
+    g.fillStyle = "#ffffff";
+    g.fill();
+    g.strokeStyle = isSel ? "#fbbf24" : "rgba(0, 0, 0, 0.85)";
+    g.lineWidth = (isSel ? 2 : 1.5) / zoom;
     g.stroke();
     g.lineWidth = 1 / zoom;
   }

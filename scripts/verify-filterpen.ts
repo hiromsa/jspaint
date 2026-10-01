@@ -236,9 +236,9 @@ async function main(): Promise<void> {
           .filter((b) => b.offsetParent !== null)
           .map((b) => (b.textContent ?? "").trim() || b.id),
       );
-      // 「確定/取消」= パペットワープ専用、「塗りつぶし/解除」= 選択系ツール専用
+      // 「確定/取消」= 変形系ツール (パペット / メッシュワープ) 専用、「塗りつぶし/解除」= 選択系ツール専用
       const stray = labels.filter((label) => {
-        if (label === "確定" || label === "取消") return tool !== "puppet-warp";
+        if (label === "確定" || label === "取消") return tool !== "puppet-warp" && tool !== "mesh-warp";
         if (label === "塗りつぶし" || label === "解除") return !SEL_TOOLS.includes(tool);
         return false;
       });

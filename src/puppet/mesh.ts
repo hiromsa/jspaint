@@ -6,6 +6,7 @@
  * ドキュメントは可変サイズのため、走査範囲 (width / height) は引数で受け取る。
  */
 import type { Pt } from "../core/types";
+import { regionBounds, type MeshRegion } from "../core/canvasUtils";
 import { triangulate } from "./delaunay";
 
 /** 制御点 (ピン)。original = 打った初期位置、current = 現在の移動先 */
@@ -27,31 +28,6 @@ export interface PuppetMesh {
   vertices: Pt[];
   triangles: PuppetTriangle[];
   pins: PuppetPin[];
-}
-
-/** 変形対象領域の判定 (ピクセル座標 → 領域内かどうか) */
-export type MeshRegion = (x: number, y: number) => boolean;
-
-export interface MeshBounds {
-  x0: number;
-  y0: number;
-  x1: number;
-  y1: number;
-}
-
-/** 領域の外接矩形を求める (走査範囲は width × height)。領域が空なら null */
-export function regionBounds(contains: MeshRegion, width: number, height: number): MeshBounds | null {
-  let x0 = width, y0 = height, x1 = -1, y1 = -1;
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (!contains(x, y)) continue;
-      if (x < x0) x0 = x;
-      if (x > x1) x1 = x;
-      if (y < y0) y0 = y;
-      if (y > y1) y1 = y;
-    }
-  }
-  return x1 < x0 ? null : { x0, y0, x1, y1 };
 }
 
 /**

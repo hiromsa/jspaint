@@ -3,8 +3,9 @@
  * 実行: npm run test:puppet
  * canvas 非依存のため、esbuild でバンドルして node 上で直接実行する。
  */
+import { regionBounds } from "../src/core/canvasUtils";
 import { triangulate } from "../src/puppet/delaunay";
-import { buildMesh, inverseDeformPoint, regionBounds } from "../src/puppet/mesh";
+import { buildMesh, inverseDeformPoint } from "../src/puppet/mesh";
 import { computeDeformedVertices } from "../src/puppet/deformer";
 import type { Pt } from "../src/core/types";
 

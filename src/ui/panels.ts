@@ -12,6 +12,7 @@ import { PAINT_TOOLS, TOOLS, TOOL_ICON } from "../core/toolDefs";
 import type { SelMode, ToolId } from "../core/types";
 import { render } from "../rendering/renderer";
 import { warpSession } from "../puppet/warpSession";
+import { meshWarpSession } from "../meshwarp/warpSession";
 import { deselect, fillSelection, selectAll } from "../core/selectionOps";
 import { $, $$, paintRangeFill } from "./dom";
 import { toast } from "./feedback";
@@ -122,6 +123,8 @@ export function setTool(tool: ToolId): void {
   else samSelect.resetPoints(); // ツールを離れたら SAMポイント指定を終了する (選択範囲は維持)
   // パペットワープセッションの引継ぎ (puppet-warp に切り替えたら開始 / 離脱時は自動確定)
   warpSession.handleToolChange(tool);
+  // メッシュワープセッションの引継ぎ (mesh-warp に切り替えたら開始 / 離脱時は自動確定)
+  meshWarpSession.handleToolChange(tool);
   state.tool = tool;
   // ツール別サイズを復元 (サイズUIを持たないツールでは現在値を維持)
   restoreToolSize(tool);
@@ -277,6 +280,10 @@ export function bindControls(): void {
   });
   $("#btn-warp-apply").addEventListener("click", () => warpSession.commit());
   $("#btn-warp-cancel").addEventListener("click", () => warpSession.cancel());
+
+  // メッシュワープ (確定 / 取消)
+  $("#btn-meshwarp-apply").addEventListener("click", () => meshWarpSession.commit());
+  $("#btn-meshwarp-cancel").addEventListener("click", () => meshWarpSession.cancel());
 
   // すべて選択
   $("#btn-select-all").addEventListener("click", selectAll);

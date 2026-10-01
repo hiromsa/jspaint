@@ -78,7 +78,14 @@
       </div>
       <span class="hrule"></span>
       <div class="toolgroup" role="group" aria-label="変形">
-        <button class="toolbtn" data-tool="puppet-warp" title="パペットワープ (T) — ピンを打ってドラッグでメッシュ変形 · Enter=確定 / Esc=取消"><i data-icon="pin"></i></button>
+        <div class="toolstack" data-stack="puppet-warp,mesh-warp">
+          <button class="toolbtn" data-tool="puppet-warp" title="パペットワープ (T) — ピンを打ってドラッグでメッシュ変形 · Enter=確定 / Esc=取消"><i data-icon="pin"></i></button>
+          <button class="toolstack__caret" title="パペットワープ / メッシュワープ を切り替え"><i data-icon="chevron-right"></i></button>
+          <div class="toolstack__pop" hidden>
+            <button class="toolbtn" data-tool="puppet-warp" title="パペットワープ (T) — ピンを打ってドラッグでメッシュ変形 · Enter=確定 / Esc=取消"><i data-icon="pin"></i></button>
+            <button class="toolbtn" data-tool="mesh-warp" title="メッシュワープ (T で切替) — ベジェメッシュで面的な歪みを変形 · 辺/面ダブルクリックで細分化"><i data-icon="grid-2x2"></i></button>
+          </div>
+        </div>
       </div>
       <span class="hrule"></span>
       <div class="toolgroup" role="group" aria-label="図形">
@@ -288,6 +295,13 @@
           <div class="ctrl sel-actions" data-show="puppet-warp">
             <button class="btn btn--primary" id="btn-warp-apply" title="変形をレイヤーに焼き込む (Enter)"><i data-icon="check"></i>確定</button>
             <button class="btn btn--ghost" id="btn-warp-cancel" title="変形を破棄して元に戻す (Esc)"><i data-icon="x"></i>取消</button>
+          </div>
+
+          <p class="fx-desc" data-show="mesh-warp">対象領域を囲むベジェメッシュで面的な歪みを変形します。<b>ノードをドラッグ</b>=移動 · <b>ノードをクリック</b>=選択 (ハンドルと対向ハンドルを表示) · <b>ハンドルをドラッグ</b>=辺の曲がり · <b>辺をドラッグ</b>=カーソルに吸いつく曲線変形 · <b>辺 / 面をダブルクリック</b>=細分化。<b>Enter</b>で確定 / <b>Esc</b>で取消。選択範囲があればその範囲内のみ変形し、編集対象レイヤーすべてに適用されます。ツールを切り替えると変形は自動確定されます。</p>
+
+          <div class="ctrl sel-actions" data-show="mesh-warp">
+            <button class="btn btn--primary" id="btn-meshwarp-apply" title="変形をレイヤーに焼き込む (Enter)"><i data-icon="check"></i>確定</button>
+            <button class="btn btn--ghost" id="btn-meshwarp-cancel" title="変形を破棄して元に戻す (Esc)"><i data-icon="x"></i>取消</button>
           </div>
 
           <div class="ctrl" data-show="ai-select">

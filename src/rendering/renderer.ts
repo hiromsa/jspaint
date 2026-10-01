@@ -9,7 +9,7 @@ import { selection } from "../core/selectionStore";
 import { viewport } from "../core/viewState";
 import { drawMaskLayerDisplay } from "./maskDisplay";
 import { warpSession } from "../puppet/warpSession";
-import { drawCursor, drawDragSizeBadge, drawPuppetWarpOverlay, drawSelectionPreview, drawStrokePreview } from "./previews";
+import { drawCursor, drawDragSizeBadge, drawMeshWarpOverlay, drawPuppetWarpOverlay, drawSelectionPreview, drawStrokePreview } from "./previews";
 
 export const view = document.querySelector("#view") as HTMLCanvasElement;
 export const vctx = view.getContext("2d")!;
@@ -60,6 +60,7 @@ export function render(): void {
 
   drawStrokePreview(vctx);
   drawPuppetWarpOverlay(vctx);
+  drawMeshWarpOverlay(vctx);
   drawSelectionPreview(vctx);
 
   vctx.restore();

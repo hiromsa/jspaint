@@ -11,6 +11,7 @@ export const TOOLS: Record<ToolId, { label: string; key: string; guide: string; 
   smudge:      { label: "指先",         key: "S", guide: "ドラッグで色をにじませる · [ ] でサイズ", cursor: "none" },
   bloat:       { label: "膨張",         key: "V", guide: "ドラッグで領域を球面状に変形 · 長押しで持続 · [ ] でサイズ · Alt で方向を一時反転", cursor: "none" },
   "puppet-warp": { label: "パペットワープ", key: "T", guide: "クリック=ピンを打つ (Alt=固定ピン) · ピンをドラッグ=変形 · ダブルクリック=ピン削除 · Enter=確定 / Esc=取消 · 選択範囲があればその範囲のみ", cursor: "crosshair" },
+  "mesh-warp": { label: "メッシュワープ", key: "T", guide: "ノードをドラッグ=変形 · ノード選択でハンドル表示 (ドラッグ=曲がり) · 辺をドラッグ=曲線変形 · 辺/面をダブルクリック=細分化 · Enter=確定 / Esc=取消 · 選択範囲があればその範囲のみ", cursor: "crosshair" },
   dodge:       { label: "覆い焼き",     key: "D", guide: "ドラッグで明るく · Alt で焼き込みに反転", cursor: "none" },
   burn:        { label: "焼き込み",     key: "J", guide: "ドラッグで暗く · Alt で覆い焼きに反転", cursor: "none" },
   "filter-pen": { label: "フィルターペン", key: "F", guide: "ドラッグでなぞった範囲にフィルター効果を焼き込む · ツールタブで内容を設定", cursor: "none" },
@@ -30,7 +31,7 @@ export const TOOLS: Record<ToolId, { label: string; key: string; guide: string; 
 /** ツール ID → アイコン名 (assets/icons.ts の ICONS キー) */
 export const TOOL_ICON: Record<ToolId, string> = {
   brush: "brush", eraser: "eraser", bucket: "bucket",
-  smudge: "smudge", bloat: "bloat", "puppet-warp": "pin", dodge: "sun", burn: "moon", "filter-pen": "sparkles",
+  smudge: "smudge", bloat: "bloat", "puppet-warp": "pin", "mesh-warp": "grid-2x2", dodge: "sun", burn: "moon", "filter-pen": "sparkles",
   line: "line", rect: "square", ellipse: "circle",
   "select-rect": "box-select", lasso: "lasso", polygon: "pentagon", wand: "wand", "ai-select": "ai-select", "mask-pen": "pen",
   eyedropper: "pipette", pan: "hand",
@@ -43,6 +44,13 @@ export const KEY_TOOL: Record<string, ToolId> = {
   l: "line", u: "rect", o: "ellipse",
   m: "select-rect", q: "lasso", p: "polygon", w: "wand", a: "ai-select", k: "mask-pen",
   i: "eyedropper", h: "pan",
+};
+
+/** 同一ショートカットを共有するツールスタック (キー押下でメンバーを循環切替)。
+ *  パペットワープ / メッシュワープは同じスタックで `T` の押下ごとに相互切替する */
+export const KEY_TOGGLE_NEXT: Partial<Record<ToolId, ToolId>> = {
+  "puppet-warp": "mesh-warp",
+  "mesh-warp": "puppet-warp",
 };
 
 /** 選択範囲の影響を受ける描画系ツール (選択中はその範囲内のみ描画) */
