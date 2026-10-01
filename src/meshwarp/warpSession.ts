@@ -88,6 +88,7 @@ class MeshWarpSession {
     this.undoStack.length = 0;
     this.redoStack.length = 0;
     this.undoStack.push(this.grid.clone());
+    hooks.updateUndoButtons();
     this.active = true;
     hooks.toast("ノード / ハンドル / 辺をドラッグで変形 · ダブルクリックで細分化 · Enter=確定 / Esc=取消", "info");
     hooks.syncToolGuide();
@@ -185,14 +186,7 @@ class MeshWarpSession {
   /** ドラッグを終了し、高品質でプレビューを仕上げ直す */
   endDrag(): void {
     if (!this.drag) return;
-    const drag = this.drag;
     this.drag = null;
-    if (!drag.moved) {
-      // 動かさずに離した (クリックのみ) → 履歴に積んだ操作前スナップショットを取り消す
-      this.undoStack.pop();
-      this.redoStack.length = 0;
-      return;
-    }
     if (this.lowQualityPreview) this.refresh("high");
     hooks.render();
   }
@@ -228,7 +222,18 @@ class MeshWarpSession {
     }
   }
 
-  /* ---------- セッション内 Undo / Redo (Ctrl+Z / Ctrl+Y) ---------- */
+  /* ---------- セッション内 Undo / Redo (Ctrl+Z / Ctrl+Y / ヘッダーの Undo・Redo ボタン) ---------- */
+
+  /** セッション内で取り消せる操作があるか (ヘッダーの Undo ボタン制御用)。
+   *  底 (ツール開始時の状態) 以外のスナップショットがあれば 1 操作以上取り消せる */
+  get canUndo(): boolean {
+    return this.active && this.undoStack.length > 1;
+  }
+
+  /** セッション内でやり直せる操作があるか */
+  get canRedo(): boolean {
+    return this.active && this.redoStack.length > 0;
+  }
 
   /** 操作前のグリッド状態を履歴へ積む (新しい操作を行うたびに Redo をクリア) */
   pushUndo(): void {
@@ -237,6 +242,7 @@ class MeshWarpSession {
     this.undoStack.push(grid.clone());
     if (this.undoStack.length > MW_MAX_HISTORY) this.undoStack.shift();
     this.redoStack.length = 0;
+    hooks.updateUndoButtons();
   }
 
   /** セッション内の 1 操作を取り消す (ツール開始時の状態まで戻せる) */
@@ -248,6 +254,7 @@ class MeshWarpSession {
     this.selectedNodeId = null;
     this.hoverEdge = null;
     this.refresh("high");
+    hooks.updateUndoButtons();
     hooks.render();
   }
 
@@ -260,6 +267,7 @@ class MeshWarpSession {
     this.selectedNodeId = null;
     this.hoverEdge = null;
     this.refresh("high");
+    hooks.updateUndoButtons();
     hooks.render();
   }
 
@@ -307,7 +315,7 @@ class MeshWarpSession {
   hoverCursor(d: Pt, zoom: number): string {
     const grid = this.grid;
     if (!grid || this.drag) return "crosshair";
-    if (this.selectedNodeId != null && this.pickHandle(d, MW_HANDLE_HIT_RADIUS / zoom)) return "crosshair";
+    if (this.selectedNodeId != null && this.pickHandle(d, MW_HANDLE_HIT_RADIUS / zoom)) return "grab";
     if (grid.hitNode(d, MW_NODE_HIT_RADIUS / zoom)) return "move";
     if (grid.hitEdge(d, MW_EDGE_HIT_RADIUS / zoom)) return "grab";
     return "crosshair";
@@ -401,6 +409,7 @@ class MeshWarpSession {
     this.undoStack.length = 0;
     this.redoStack.length = 0;
     hooks.render();
+    hooks.updateUndoButtons();
     hooks.syncToolGuide();
   }
 }

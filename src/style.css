@@ -169,14 +169,14 @@ svg { display: block; }
 
 .toolbtn {
   position: relative;
-  width: 40px; height: 38px;
+  width: 42px; height: 40px;
   display: grid; place-items: center;
   color: var(--text-2);
   background: transparent; border: 1px solid transparent; border-radius: var(--r-md);
   cursor: pointer;
   transition: background 0.1s, color 0.1s, border-color 0.1s;
 }
-.toolbtn svg { width: 17px; height: 17px; }
+.toolbtn svg { width: 18px; height: 18px; }
 .toolbtn:hover { color: var(--text); background: #232323; }
 .toolbtn.is-active {
   color: #fff;
@@ -189,27 +189,28 @@ svg { display: block; }
   background: linear-gradient(180deg, var(--accent), var(--accent-2));
 }
 
-/* ツールスタック (階層ツール: 覆い焼き / 焼き込み など) */
+/* ツールスタック (階層ツール: 覆い焼き / 焼き込み など)。
+   キャレットは「明背景 × 暗アイコン」の反転バッジで視認性を確保する */
 .toolstack { position: relative; }
 .toolstack__caret {
-  position: absolute; right: -3px; bottom: -3px;
-  width: 15px; height: 15px;
+  position: absolute; right: -4px; bottom: -4px;
+  width: 18px; height: 18px;
   display: grid; place-items: center;
-  color: var(--text-3);
-  background: #2b2b2b;
-  border: 1px solid var(--border-2);
-  border-radius: 4px;
+  color: #17181c;
+  background: #d7d9de;
+  border: 1px solid #f2f3f5;
+  border-radius: 5px;
   cursor: pointer;
   padding: 0;
   z-index: 2;
-  transition: color 0.1s, background 0.1s;
+  transition: color 0.1s, background 0.1s, border-color 0.1s;
 }
-.toolstack__caret svg { width: 9px; height: 9px; }
-.toolstack__caret:hover { color: var(--text); background: #353535; }
+.toolstack__caret svg { width: 11px; height: 11px; }
+.toolstack__caret:hover { color: #000; background: #ffffff; border-color: #ffffff; }
 .toolstack__pop {
-  position: absolute; left: 46px; top: -4px;
-  display: flex; flex-direction: column; gap: 2px;
-  padding: 4px;
+  position: absolute; left: 48px; top: -4px;
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 5px;
   background: var(--panel-3);
   border: 1px solid var(--border-2);
   border-radius: var(--r-md);

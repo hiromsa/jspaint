@@ -321,6 +321,16 @@ async function main(): Promise<void> {
     ok("スタックポップから mesh-warp を選択できる", (await stackMainTool(page)) === "mesh-warp");
     ok("セッション開始の案内トースト", (await lastToast(page)).includes("ノード / ハンドル / 辺をドラッグで変形"));
     ok("ツールタブにメッシュワープ用の確定ボタンが表示", await page.$eval("#btn-meshwarp-apply", (el) => (el as HTMLElement).offsetParent !== null));
+    // 操作がない状態ではヘッダーの Undo ボタン (セッション内履歴) が無効
+    ok("セッション開始直後はヘッダー Undo ボタンが無効", await page.$eval("#btn-undo", (el: HTMLInputElement) => (el as HTMLButtonElement).disabled));
+
+    /* --- ハンドル上でカーソルが「つかむ」に変わる --- */
+    // 左上ノードをクリックで選択 → 仮想ハンドル (隣接方向へエッジ長の 1/3) が表示される
+    await page.mouse.click(sx(0), sy(0));
+    await new Promise((r) => setTimeout(r, 150));
+    await page.mouse.move(sx(213), sy(0));
+    await new Promise((r) => setTimeout(r, 150));
+    ok("ハンドル上でカーソルが grab (つかむ) に変わる", (await page.$eval("#stage", (el) => (el as HTMLElement).style.cursor)) === "grab");
 
     /* --- 上エッジ中央を上へドラッグ → エッジの直接変形 --- */
     await page.mouse.move(sx(320), sy(0));
@@ -347,6 +357,17 @@ async function main(): Promise<void> {
     await new Promise((r) => setTimeout(r, 250));
     const sessionRedone = await viewPixel(page, 0, 0);
     ok("Ctrl+Y でセッション内の操作をやり直し", colorDiff(baseline, sessionRedone) > 4, `diff=${colorDiff(baseline, sessionRedone)}`);
+
+    /* --- ヘッダーの Undo / Redo ボタンでもセッション内履歴を操作できる --- */
+    ok("操作後にヘッダー Undo ボタンが有効", await page.$eval("#btn-undo", (el) => !(el as HTMLButtonElement).disabled));
+    await page.click("#btn-undo");
+    await new Promise((r) => setTimeout(r, 250));
+    const headerUndone = await viewPixel(page, 0, 0);
+    ok("ヘッダー Undo ボタンでセッション内の操作を取り消し", colorDiff(baseline, headerUndone) <= 2, `diff=${colorDiff(baseline, headerUndone)}`);
+    await page.click("#btn-redo");
+    await new Promise((r) => setTimeout(r, 250));
+    const headerRedone = await viewPixel(page, 0, 0);
+    ok("ヘッダー Redo ボタンでセッション内の操作をやり直し", colorDiff(baseline, headerRedone) > 4, `diff=${colorDiff(baseline, headerRedone)}`);
 
     /* --- Enter で確定 → レイヤーに焼き込まれる --- */
     await page.keyboard.press("Enter");
