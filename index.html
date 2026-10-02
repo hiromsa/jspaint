@@ -290,17 +290,26 @@
             <input type="range" id="ctl-mesh" min="16" max="64" step="8" value="32" />
           </div>
 
-          <p class="fx-desc" data-show="puppet-warp">ピンを打った位置を基準にメッシュ (三角分割) 全体を滑らかに変形します。<b>クリック</b>=ピンを打つ (<b>Alt+クリック</b>=固定ピン / 青表示) · ピンの<b>ドラッグ</b>=変形 · ピンの<b>ダブルクリック</b>=削除。<b>Enter</b>で確定 / <b>Esc</b>で取消。選択範囲があればその範囲内のみ変形し、編集対象レイヤーすべてに適用されます。ツールを切り替えると変形は自動確定されます。</p>
+          <div class="ctrl" data-show="puppet-warp,mesh-warp">
+            <div class="ctrl__label">反映方法 <span class="ctrl__sub">確定時の反映先</span></div>
+            <div class="seg" role="group" aria-label="反映方法">
+              <button class="seg__btn is-active" data-warp-apply="overlay" title="既存の画像を壊さずに変形結果を上書きします — ワープで画像が無くなる部分には元の画像が残ります">上書き</button>
+              <button class="seg__btn" data-warp-apply="destructive" title="既存の画像を変形結果で置き換えます — ワープで画像が無くなる部分は透明になります">置換</button>
+              <button class="seg__btn" data-warp-apply="new-layer" title="変形結果を元のレイヤーの真上に新規レイヤーとして追加します (元のレイヤーは変更しません / 確定後はレイヤーを削除して戻します)">新規レイヤー</button>
+            </div>
+          </div>
+
+          <p class="fx-desc" data-show="puppet-warp">ピンを打った位置を基準にメッシュ (三角分割) 全体を滑らかに変形します。<b>クリック</b>=ピンを打つ (<b>Alt+クリック</b>=固定ピン / 青表示) · ピンの<b>ドラッグ</b>=変形 · ピンの<b>ダブルクリック</b>=削除。<b>Enter</b>で確定 / <b>Esc</b>で取消。<b>Ctrl+Z / Ctrl+Y</b>=セッション内を 1 操作ずつ戻す / 進める。選択範囲があればその範囲内のみ変形し、編集対象レイヤーすべてに適用されます。確定は「反映方法」に従います (上書き=既定 / 置換 / 新規レイヤー)。ツールを切り替えると変形は自動確定されます。</p>
 
           <div class="ctrl sel-actions" data-show="puppet-warp">
-            <button class="btn btn--primary" id="btn-warp-apply" title="変形をレイヤーに焼き込む (Enter)"><i data-icon="check"></i>確定</button>
+            <button class="btn btn--primary" id="btn-warp-apply" title="変形を確定して「反映方法」の通りに反映する (Enter)"><i data-icon="check"></i>確定</button>
             <button class="btn btn--ghost" id="btn-warp-cancel" title="変形を破棄して元に戻す (Esc)"><i data-icon="x"></i>取消</button>
           </div>
 
-          <p class="fx-desc" data-show="mesh-warp">対象領域を囲むベジェメッシュで面的な歪みを変形します。<b>ノードをドラッグ</b>=移動 · <b>ノードをクリック</b>=選択 (ハンドルと対向ハンドルを表示) · <b>ハンドルをドラッグ</b>=辺の曲がり · <b>辺をドラッグ</b>=カーソルに吸いつく曲線変形 · <b>辺 / 面をダブルクリック</b>=ライン追加 (グリッド全体に貫通) · <b>Ctrl+Z / Ctrl+Y</b>=セッション内を 1 操作ずつ戻す / 進める。<b>Enter</b>で確定 / <b>Esc</b>で取消。選択範囲があればその範囲内のみ変形し、編集対象レイヤーすべてに適用されます。ツールを切り替えると変形は自動確定されます。</p>
+          <p class="fx-desc" data-show="mesh-warp">対象領域を囲むベジェメッシュで面的な歪みを変形します。<b>ノードをドラッグ</b>=移動 · <b>ノードをクリック</b>=選択 (ハンドルと対向ハンドルを表示) · <b>ハンドルをドラッグ</b>=辺の曲がり · <b>辺をドラッグ</b>=カーソルに吸いつく曲線変形 · <b>辺 / 面をダブルクリック</b>=ライン追加 (グリッド全体に貫通) · <b>Ctrl+Z / Ctrl+Y</b>=セッション内を 1 操作ずつ戻す / 進める。<b>Enter</b>で確定 / <b>Esc</b>で取消。選択範囲があればその範囲内のみ変形し、編集対象レイヤーすべてに適用されます。確定は「反映方法」に従います (上書き=既定 / 置換 / 新規レイヤー)。ツールを切り替えると変形は自動確定されます。</p>
 
           <div class="ctrl sel-actions" data-show="mesh-warp">
-            <button class="btn btn--primary" id="btn-meshwarp-apply" title="変形をレイヤーに焼き込む (Enter)"><i data-icon="check"></i>確定</button>
+            <button class="btn btn--primary" id="btn-meshwarp-apply" title="変形を確定して「反映方法」の通りに反映する (Enter)"><i data-icon="check"></i>確定</button>
             <button class="btn btn--ghost" id="btn-meshwarp-cancel" title="変形を破棄して元に戻す (Esc)"><i data-icon="x"></i>取消</button>
           </div>
 
@@ -460,7 +469,7 @@
     <div class="statusbar__group">
       <span class="mono st-zoom" id="st-zoom">100%</span>
       <span class="vdiv"></span>
-      <span class="mono st-ver">JSPaint v0.2.21 · TypeScript</span>
+      <span class="mono st-ver">JSPaint v0.2.25 · TypeScript</span>
     </div>
   </footer>
 

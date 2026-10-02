@@ -191,6 +191,20 @@ export class DocumentStore {
     return l;
   }
 
+  /**
+   * ワープ結果を target レイヤーの真上へ新規レイヤーとして挿入する
+   * (パペット / メッシュワープの「新規レイヤーとして反映」用。元レイヤーは無変更)。
+   * レイヤー構造はドキュメント履歴 (Undo) の対象外 — 戻すにはこのレイヤーを削除する。
+   */
+  insertWarpResultLayer(target: Layer, image: HTMLCanvasElement, name: string): Layer {
+    const l = this.makeLayer(name, "paint");
+    l.ctx.drawImage(image, 0, 0);
+    // 描画順 (下 → 上) の配列なので target の直後に挿入 =「真上」になる
+    const idx = this.layers.findIndex((x) => x.id === target.id);
+    this.layers.splice(idx + 1, 0, l);
+    return l;
+  }
+
   /** 新規描画レイヤー名の連番 (既存連番の重複を避けて採番) */
   private nextPaintLayerNumber(): number {
     let n = this.paintLayers().length + 1;

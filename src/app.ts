@@ -37,16 +37,18 @@ import { bindImageIO } from "./ui/imageIO";
 import { bindHostBridge } from "./ui/hostBridge";
 import { applyHostModeUI } from "./ui/hostMode";
 import { meshWarpSession } from "./meshwarp/warpSession";
+import { warpSession } from "./puppet/warpSession";
 import { $ } from "./ui/dom";
 import { markDirty, toast } from "./ui/feedback";
 
 const workspace = $("#workspace");
 
 function updateUndoButtons(): void {
-  // メッシュワープセッション中はセッション内履歴 (ツール内の操作) の有無で制御する
-  if (meshWarpSession.active) {
-    ($("#btn-undo") as HTMLButtonElement).disabled = !meshWarpSession.canUndo;
-    ($("#btn-redo") as HTMLButtonElement).disabled = !meshWarpSession.canRedo;
+  // ワープセッション (パペット / メッシュ) 中はセッション内履歴 (ツール内の操作) の有無で制御する
+  const session = warpSession.active ? warpSession : meshWarpSession.active ? meshWarpSession : null;
+  if (session) {
+    ($("#btn-undo") as HTMLButtonElement).disabled = !session.canUndo;
+    ($("#btn-redo") as HTMLButtonElement).disabled = !session.canRedo;
     return;
   }
   ($("#btn-undo") as HTMLButtonElement).disabled = !history.canUndo;

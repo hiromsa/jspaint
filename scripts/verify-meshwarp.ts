@@ -272,6 +272,30 @@ async function stackMainTool(page: Page): Promise<string> {
   return page.$eval('[data-stack="puppet-warp,mesh-warp"] > .toolbtn', (el) => (el as HTMLElement).dataset.tool ?? "");
 }
 
+/** カーソルを動かさずに view 中心基準オフセット (画面px) の 1px を読む (ドラッグ中のプレビュー検証用) */
+function readPixel(page: Page, dx: number, dy: number): Promise<[number, number, number]> {
+  return page.evaluate((dx, dy) => {
+    const view = document.querySelector("#view") as HTMLCanvasElement;
+    const d = view.getContext("2d")!.getImageData(Math.round(view.width / 2) + dx, Math.round(view.height / 2) + dy, 1, 1).data;
+    return [d[0], d[1], d[2]];
+  }, dx, dy);
+}
+
+async function layerCount(page: Page): Promise<number> {
+  return page.$$eval("#layer-list li", (els) => els.length);
+}
+
+async function activeLayerName(page: Page): Promise<string> {
+  return page.$eval("#layer-list li.is-active .layer__name", (el) => el.textContent ?? "");
+}
+
+/** Ctrl+Z (ドキュメント履歴) を送る */
+async function undoKeys(page: Page): Promise<void> {
+  await page.keyboard.down("Control");
+  await page.keyboard.press("z");
+  await page.keyboard.up("Control");
+}
+
 /** view 上で dblclick を発火する (puppeteer の clickCount: 2 は dblclick を合成しないため直接 dispatch) */
 async function doubleClick(page: Page, x: number, y: number): Promise<void> {
   await page.mouse.move(x, y);
@@ -414,6 +438,107 @@ async function main(): Promise<void> {
     await new Promise((r) => setTimeout(r, 150));
     ok("T キー (puppet-warp 選択中) でメッシュワープへ切替", (await stackMainTool(page)) === "mesh-warp");
     await page.keyboard.press("Escape");
+
+    /* ================================================================
+     * 選択範囲ありメッシュワープ: ドラッグ中プレビュー (回帰) と反映方法
+     * ================================================================ */
+    const page2 = await browser.newPage();
+    page2.on("console", (msg) => console.log(`  [browser2] ${msg.text()}`));
+    await page2.setViewport({ width: 1280, height: 800 });
+    await page2.goto(`${fileUrl}?mode=standalone`);
+    await page2.waitForSelector("#layer-list li");
+    await new Promise((r) => setTimeout(r, 300));
+
+    const box2 = (await (await page2.$("#view")).boundingBox())!;
+    const cx2 = box2.x + box2.width / 2;
+    const cy2 = box2.y + box2.height / 2;
+    const zoom2 = parseFloat((await page2.$eval("#ws-zoom", (el) => el.textContent ?? "100%")) || "100") / 100;
+    const sx2 = (x: number): number => cx2 + (x - 320) * zoom2;
+    const sy2 = (y: number): number => cy2 + (y - 320) * zoom2;
+    const px2 = (docX: number, docY: number) => readPixel(page2, (docX - 320) * zoom2, (docY - 320) * zoom2);
+
+    // 下半分を矩形選択 → baseline はセッション開始前 (オーバーレイが写らない状態) で取る
+    await page2.click('[data-tool="select-rect"]');
+    await page2.mouse.move(sx2(0), sy2(321));
+    await page2.mouse.down();
+    await page2.mouse.move(sx2(640), sy2(640), { steps: 6 });
+    await page2.mouse.up();
+    await new Promise((r) => setTimeout(r, 200));
+    await page2.mouse.move(box2.x - 40, box2.y - 40);
+    await new Promise((r) => setTimeout(r, 150));
+    const baseGap = await px2(320, 360); // ワープで画像が無くなる部分 (元画像が残るはずの点)
+    const baseWarp = await px2(320, 500); // 変形画像が流れ込む部分
+
+    // メッシュワープへ切替 → セッション (グリッド = 下半分)
+    await page2.click('[data-stack="puppet-warp,mesh-warp"] .toolstack__caret');
+    await page2.click('[data-stack="puppet-warp,mesh-warp"] .toolstack__pop [data-tool="mesh-warp"]');
+    await new Promise((r) => setTimeout(r, 250));
+
+    // グリッド上端エッジ中央 (320,320) を (320,400) へドラッグ (押したまま途中でプレビューを確認)。
+    // エッジが下がるため、選択範囲内の上端直下 (y 320..400) に「ワープで画像が無くなる部分」が生じる
+    await page2.mouse.move(sx2(320), sy2(320));
+    await page2.mouse.down();
+    await page2.mouse.move(sx2(320), sy2(400), { steps: 8 });
+    await new Promise((r) => setTimeout(r, 220));
+    const duringSel = await px2(320, 500);
+    ok("選択範囲ありでもエッジドラッグ中に変形プレビューが表示される (回帰)", colorDiff(baseWarp, duringSel) > 4, `diff=${colorDiff(baseWarp, duringSel)}`);
+    await page2.mouse.up();
+    await new Promise((r) => setTimeout(r, 250));
+
+    /* --- 上書き (既定) で確定 --- */
+    await page2.keyboard.press("Enter");
+    await new Promise((r) => setTimeout(r, 250));
+    await page2.click('[data-tool="brush"]');
+    await new Promise((r) => setTimeout(r, 200));
+    const ovGap = await px2(320, 360);
+    const ovWarp = await px2(320, 500);
+    ok("上書き確定: ワープで画像が無くなる部分に元の画像が残る", colorDiff(baseGap, ovGap) <= 3, `diff=${colorDiff(baseGap, ovGap)}`);
+    ok("上書き確定: 変形結果が元の画像の上に重なって反映される", colorDiff(baseWarp, ovWarp) > 4, `diff=${colorDiff(baseWarp, ovWarp)}`);
+    await undoKeys(page2);
+    await new Promise((r) => setTimeout(r, 250));
+
+    /* --- 置換で確定 --- */
+    await page2.click('[data-stack="puppet-warp,mesh-warp"] .toolstack__caret');
+    await page2.click('[data-stack="puppet-warp,mesh-warp"] .toolstack__pop [data-tool="mesh-warp"]');
+    await new Promise((r) => setTimeout(r, 250));
+    await page2.mouse.move(sx2(320), sy2(320));
+    await page2.mouse.down();
+    await page2.mouse.move(sx2(320), sy2(400), { steps: 8 });
+    await page2.mouse.up();
+    await new Promise((r) => setTimeout(r, 250));
+    await page2.click('[data-warp-apply="destructive"]');
+    await new Promise((r) => setTimeout(r, 200));
+    await page2.keyboard.press("Enter");
+    await new Promise((r) => setTimeout(r, 250));
+    await page2.click('[data-tool="brush"]');
+    await new Promise((r) => setTimeout(r, 200));
+    const rpGap = await px2(320, 360);
+    ok("置換確定: ワープで画像が無くなる部分は透明になり元画像が消える", colorDiff(baseGap, rpGap) > 30, `diff=${colorDiff(baseGap, rpGap)}`);
+    await undoKeys(page2);
+    await new Promise((r) => setTimeout(r, 250));
+
+    /* --- 新規レイヤーで確定 --- */
+    const beforeCount = await layerCount(page2);
+    await page2.click('[data-stack="puppet-warp,mesh-warp"] .toolstack__caret');
+    await page2.click('[data-stack="puppet-warp,mesh-warp"] .toolstack__pop [data-tool="mesh-warp"]');
+    await new Promise((r) => setTimeout(r, 250));
+    await page2.mouse.move(sx2(320), sy2(320));
+    await page2.mouse.down();
+    await page2.mouse.move(sx2(320), sy2(400), { steps: 8 });
+    await page2.mouse.up();
+    await new Promise((r) => setTimeout(r, 250));
+    await page2.click('[data-warp-apply="new-layer"]');
+    await new Promise((r) => setTimeout(r, 200));
+    await page2.keyboard.press("Enter");
+    await new Promise((r) => setTimeout(r, 300));
+    await page2.click('[data-tool="brush"]');
+    await new Promise((r) => setTimeout(r, 200));
+    const afterCount = await layerCount(page2);
+    ok("新規レイヤー確定でレイヤーが 1 枚追加される", afterCount === beforeCount + 1, `before=${beforeCount} after=${afterCount}`);
+    const nlGap = await px2(320, 360);
+    ok("新規レイヤー確定: 元のレイヤーは無変更 (空き部分に元画像が残る)", colorDiff(baseGap, nlGap) <= 3, `diff=${colorDiff(baseGap, nlGap)}`);
+    const activeName = await activeLayerName(page2);
+    ok("結果レイヤーがアクティブになる", activeName.includes("メッシュワープ"), `name=${activeName}`);
   } finally {
     await browser.close();
   }

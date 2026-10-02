@@ -22,6 +22,14 @@ export type ToolId =
 /** 選択合成モード: 新規 / 追加 (Shift) / 除外 (Alt) */
 export type SelMode = "new" | "add" | "sub";
 
+/**
+ * ワープ (パペット / メッシュ) の反映方法:
+ *   - overlay:     既存の画像を壊さずに変形結果を上書き (ワープで画像が無くなる部分に元の画像が残る)
+ *   - destructive: 既存の画像を変形結果で置き換える (ワープで画像が無くなる部分は透明になる)
+ *   - new-layer:   変形結果を元のレイヤーの真上に新規レイヤーとして追加する (元レイヤーは無変更)
+ */
+export type WarpApplyMode = "overlay" | "destructive" | "new-layer";
+
 /** Toast の表示種別 */
 export type ToastKind = "info" | "ok" | "fx";
 

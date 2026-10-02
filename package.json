@@ -1,7 +1,7 @@
 {
   "name": "jspaint",
   "private": true,
-  "version": "0.2.24",
+  "version": "0.2.25",
   "description": "JSPaint - Inpainting pre-processing paint tool for SD WebUI Forge (UI mock)",
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test:puppet": "esbuild scripts/verify-puppet.ts --bundle --platform=node --format=esm --outfile=%TEMP%\\verify-puppet.mjs && node %TEMP%\\verify-puppet.mjs",
+    "test:puppet": "esbuild scripts/verify-puppet.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __createRequire } from 'module'; const require = __createRequire(import.meta.url);\" --outfile=%TEMP%\\verify-puppet.mjs && node %TEMP%\\verify-puppet.mjs",
     "test:meshwarp": "esbuild scripts/verify-meshwarp.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __createRequire } from 'module'; const require = __createRequire(import.meta.url);\" --outfile=%TEMP%\\verify-meshwarp.mjs && node %TEMP%\\verify-meshwarp.mjs",
     "test:filterpen": "esbuild scripts/verify-filterpen.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __createRequire } from 'module'; const require = __createRequire(import.meta.url);\" --outfile=%TEMP%\\verify-filterpen.mjs && node %TEMP%\\verify-filterpen.mjs",
     "test:imageio": "esbuild scripts/verify-imageio.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __createRequire } from 'module'; const require = __createRequire(import.meta.url);\" --outfile=%TEMP%\\verify-imageio.mjs && node %TEMP%\\verify-imageio.mjs",

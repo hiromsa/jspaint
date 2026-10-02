@@ -102,7 +102,8 @@ function onPointerDown(e: PointerEvent): void {
         break;
       }
       if (hit) {
-        warpSession.dragPinId = hit.id;
+        // ピンのドラッグ開始 (最初の移動で操作前の状態がセッション内履歴へ積まれる)
+        warpSession.beginDragPin(hit.id);
       } else {
         // クリックした位置にピンを打ち、押したままドラッグで調整できる
         warpSession.addPin(d, e.altKey);

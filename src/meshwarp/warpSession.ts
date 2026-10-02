@@ -7,10 +7,12 @@
  */
 import { clone, regionBounds } from "../core/canvasUtils";
 import { doc } from "../core/documentStore";
+import { state } from "../core/editorState";
 import { hooks } from "../core/hooks";
 import { history } from "../core/historyStack";
 import { selection } from "../core/selectionStore";
 import type { Pt, ToolId } from "../core/types";
+import { composeWarpPreview, commitWarpToNewLayers } from "../rendering/warpCompose";
 import { MeshWarpGrid, subPt, type MwEdgeDrag, type MwEdgeHit } from "./meshGrid";
 import { renderWarpedMesh } from "./warpPaint";
 
@@ -56,6 +58,8 @@ class MeshWarpSession {
 
   private readonly sources = new Map<number, HTMLCanvasElement>();
   private readonly previews = new Map<number, HTMLCanvasElement>();
+  /** 変形結果そのもの (選択範囲あり = クリップ済み)。「新規レイヤーとして反映」の確定に使う */
+  private readonly warpParts = new Map<number, HTMLCanvasElement>();
   /** 予約中のドラッグ用プレビュー更新 (rAF ハンドル。0 = なし) */
   private previewRaf = 0;
   /** プレビューが低品質 (ドラッグ中の高速転写) のままか */
@@ -79,6 +83,7 @@ class MeshWarpSession {
     this.grid = MeshWarpGrid.createRect(bounds.x0, bounds.y0, bounds.x1 + 1, bounds.y1 + 1);
     this.sources.clear();
     this.previews.clear();
+    this.warpParts.clear();
     for (const l of doc.editTargets()) this.sources.set(l.id, clone(l.canvas));
     this.selectedNodeId = null;
     this.drag = null;
@@ -94,7 +99,7 @@ class MeshWarpSession {
     hooks.syncToolGuide();
   }
 
-  /** 変形を確定してレイヤーに焼き込む (Undo スナップショットを積む) */
+  /** 変形を確定してレイヤーに焼き込む (置換 / 上書きは Undo スナップショットを積む) */
   commit(): void {
     if (!this.active) return;
     if (this.grid && !this.grid.isIdentity()) {
@@ -102,14 +107,23 @@ class MeshWarpSession {
       if (this.lowQualityPreview) this.refresh("high");
       const targets = doc.editTargets().filter((l) => this.sources.has(l.id));
       if (targets.length > 0) {
-        history.pushUndo(targets);
-        for (const l of targets) {
-          const preview = this.previews.get(l.id)!;
-          l.ctx.clearRect(0, 0, l.canvas.width, l.canvas.height);
-          l.ctx.drawImage(preview, 0, 0);
+        if (state.warpApplyMode === "new-layer") {
+          // 新規レイヤー: 元レイヤーは無変更。レイヤー追加はドキュメント履歴の対象外 (削除で戻す)
+          commitWarpToNewLayers(
+            targets.map((l) => ({ target: l, warpedPart: this.warpParts.get(l.id)! })),
+            "メッシュワープ",
+          );
+          hooks.toast("メッシュワープを新規レイヤーに確定 (元のレイヤーは変更していません)", "ok");
+        } else {
+          history.pushUndo(targets);
+          for (const l of targets) {
+            const preview = this.previews.get(l.id)!;
+            l.ctx.clearRect(0, 0, l.canvas.width, l.canvas.height);
+            l.ctx.drawImage(preview, 0, 0);
+          }
+          hooks.markDirty();
+          hooks.toast("メッシュワープを確定", "ok");
         }
-        hooks.markDirty();
-        hooks.toast("メッシュワープを確定", "ok");
       }
     }
     this.dispose();
@@ -276,6 +290,14 @@ class MeshWarpSession {
     return this.active ? this.previews.get(layerId) ?? null : null;
   }
 
+  /** 反映方法 (WarpApplyMode) の変更などをプレビューへ即座に反映する */
+  refreshPreview(): void {
+    if (!this.active) return;
+    this.cancelScheduledPreview();
+    this.refresh("high");
+    hooks.render();
+  }
+
   /* ---------- ホバー / ハンドル表示 (仕様 3.2) ---------- */
 
   /**
@@ -351,27 +373,17 @@ class MeshWarpSession {
     if (!grid) return;
     this.lowQualityPreview = quality !== "high";
     this.previews.clear();
-    const hasSel = selection.hasSelection;
+    this.warpParts.clear();
     // 恒等変形のうちは重いメッシュ転写を省き元画像をそのまま使う
     const isDeformed = !grid.isIdentity();
     for (const [layerId, source] of this.sources) {
       const warped = isDeformed ? renderWarpedMesh(source, grid, quality) : source;
-      if (!hasSel) {
-        this.previews.set(layerId, warped);
-        continue;
-      }
-      // 選択範囲がある場合: 元画像の選択内を空けて、変形結果の選択内部分を重ねる
-      const clipped = clone(source);
-      const cg = clipped.getContext("2d")!;
-      cg.globalCompositeOperation = "destination-in";
-      cg.drawImage(selection.mask, 0, 0);
-      const out = clone(source);
-      const g = out.getContext("2d")!;
-      g.globalCompositeOperation = "destination-out";
-      g.drawImage(selection.mask, 0, 0);
-      g.globalCompositeOperation = "source-over";
-      g.drawImage(clipped, 0, 0);
-      this.previews.set(layerId, out);
+      // 反映方法 (上書き / 置換 / 新規レイヤー) に応じた合成は両ワープで共用。
+      // 選択範囲がある場合はここで「変形結果」の選択内部分が正しくクリップされる
+      // (v0.2.25 以前は元画像をクリップしており、ドラッグ中のプレビューが動かなかった)
+      const composed = composeWarpPreview(source, warped, state.warpApplyMode);
+      this.previews.set(layerId, composed.preview);
+      this.warpParts.set(layerId, composed.warpedPart);
     }
   }
 
@@ -402,6 +414,7 @@ class MeshWarpSession {
     this.grid = null;
     this.sources.clear();
     this.previews.clear();
+    this.warpParts.clear();
     this.selectedNodeId = null;
     this.drag = null;
     this.hoverEdge = null;

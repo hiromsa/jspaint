@@ -9,6 +9,7 @@ import { state } from "../core/editorState";
 import { resetDocument } from "../core/documentOps";
 import { fitView, setZoom } from "../core/viewState";
 import { cancelPolygon } from "../interaction/pointer";
+import { warpSession } from "../puppet/warpSession";
 import { meshWarpSession } from "../meshwarp/warpSession";
 import { hostMode } from "./hostMode";
 import { $, $$ } from "./dom";
@@ -105,12 +106,14 @@ function postToParent(): void {
 
 export function bindHeaderAndModal(): void {
   $("#btn-undo").addEventListener("click", () => {
-    // メッシュワープセッション中はセッション内履歴を優先 (Ctrl+Z と同じ挙動)
-    if (meshWarpSession.active) meshWarpSession.undo();
+    // ワープセッション (パペット / メッシュ) 中はセッション内履歴を優先 (Ctrl+Z と同じ挙動)
+    if (warpSession.active) warpSession.undo();
+    else if (meshWarpSession.active) meshWarpSession.undo();
     else history.undo();
   });
   $("#btn-redo").addEventListener("click", () => {
-    if (meshWarpSession.active) meshWarpSession.redo();
+    if (warpSession.active) warpSession.redo();
+    else if (meshWarpSession.active) meshWarpSession.redo();
     else history.redo();
   });
   $("#btn-zoomin").addEventListener("click", () => setZoom(state.zoom * 1.25));

@@ -2,7 +2,7 @@
  * core/editorState.ts — エディタのユーザー設定・ビュー状態
  * オブジェクト自体は不変 (プロパティのみ更新) なので、複数モジュールから安全に共有できる。
  */
-import type { SelMode, ToolId } from "./types";
+import type { SelMode, ToolId, WarpApplyMode } from "./types";
 import { SIZE_TOOLS } from "./toolDefs";
 
 /** ブラシサイズの上限 (px)。スライダー / [ ] キー / クイックサイズすべての共通クランプ */
@@ -85,6 +85,8 @@ export const state = {
   bloatDir: 1 as 1 | -1,
   /** パペットワープのメッシュ間隔 (px)。セッション中に変更するとメッシュを作り直す */
   puppetSpacing: 32,
+  /** ワープ (パペット / メッシュ共通) の反映方法。既定は「上書き」(既存画像を壊さず変形結果を重ねる) */
+  warpApplyMode: "overlay" as WarpApplyMode,
   zoom: 1,
   panX: 0,
   panY: 0,

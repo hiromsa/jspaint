@@ -1,8 +1,19 @@
 /**
- * scripts/verify-puppet.ts — パペットワープ pure ロジック (Delaunay / メッシュ生成 / MLS 変形) の単体検証
- * 実行: npm run test:puppet
- * canvas 非依存のため、esbuild でバンドルして node 上で直接実行する。
+ * scripts/verify-puppet.ts — パペットワープの検証
+ *
+ * Part 1: 純粋ロジック (Delaunay / メッシュ生成 / MLS 変形) を node 上で単体検証する
+ *         (canvas 非依存)。
+ * Part 2: 実ブラウザ E2E — セッション内 Undo / Redo (Ctrl+Z / Ctrl+Y とヘッダーボタン) と
+ *         反映方法 (上書き / 置換 / 新規レイヤー) を検証する。
+ *
+ * 実行: npm run test:puppet  (Part 2 は事前に npm run build 必須)
+ * ブラウザ: インストール済みの Chrome / Edge を自動検出して使用
  */
+import puppeteer, { type Page } from "puppeteer-core";
+import { existsSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+import path from "node:path";
+
 import { regionBounds } from "../src/core/canvasUtils";
 import { triangulate } from "../src/puppet/delaunay";
 import { buildMesh, inverseDeformPoint } from "../src/puppet/mesh";
@@ -186,5 +197,343 @@ const near = (a: number, b: number, eps = 1e-4): boolean => Math.abs(a - b) <= e
   check("逆変換: メッシュ外は入力と同じ座標を返す", outside.x === 10 && outside.y === 10);
 }
 
-console.log(`\n${pass} passed, ${fail} failed`);
-if (fail > 0) process.exit(1);
+/* ================================================================== *
+ * Part 2 — 実ブラウザ E2E (セッション内 Undo / Redo + 反映方法)
+ * ================================================================== */
+
+/* --- 使用ブラウザの解決 (verify-meshwarp.ts と同じ候補) --- */
+const BROWSER_CANDIDATES = [
+  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+];
+
+/** dist/index.html は npm run の実行ディレクトリ (プロジェクトルート) 基準で探す */
+const distFile = path.resolve(process.cwd(), "dist", "index.html");
+
+function ok(name: string, cond: boolean, detail = ""): void {
+  if (cond) {
+    pass++;
+    console.log(`  ok   ${name}`);
+  } else {
+    fail++;
+    console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ""}`);
+  }
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** 直近の toast メッセージ全文を取得する */
+async function lastToast(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const toasts = document.querySelectorAll("#toasts .toast");
+    return toasts.length ? (toasts[toasts.length - 1] as HTMLElement).textContent ?? "" : "";
+  });
+}
+
+/** カーソルを動かさずに view 中心基準オフセット (画面px) の 1px を読む (ドラッグ中のプレビュー検証用) */
+function readPixel(page: Page, dx: number, dy: number): Promise<[number, number, number]> {
+  return page.evaluate((dx, dy) => {
+    const view = document.querySelector("#view") as HTMLCanvasElement;
+    const d = view.getContext("2d")!.getImageData(Math.round(view.width / 2) + dx, Math.round(view.height / 2) + dy, 1, 1).data;
+    return [d[0], d[1], d[2]];
+  }, dx, dy);
+}
+
+/** #view 上のドキュメント中心基準オフセット (画面px) の 1px の色を取得する (カーソルを view 外へ退避) */
+async function viewPixel(page: Page, dx: number, dy: number): Promise<[number, number, number]> {
+  const box = (await (await page.$("#view")).boundingBox())!;
+  await page.mouse.move(box.x - 40, box.y - 40);
+  await sleep(120);
+  return readPixel(page, dx, dy);
+}
+
+function colorDiff(a: [number, number, number], b: [number, number, number]): number {
+  return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
+}
+
+async function undoBtnEnabled(page: Page): Promise<boolean> {
+  return page.$eval("#btn-undo", (el) => !(el as HTMLButtonElement).disabled);
+}
+
+async function layerCount(page: Page): Promise<number> {
+  return page.$$eval("#layer-list li", (els) => els.length);
+}
+
+async function activeLayerName(page: Page): Promise<string> {
+  return page.$eval("#layer-list li.is-active .layer__name", (el) => el.textContent ?? "");
+}
+
+/** Ctrl+Z / Ctrl+Y を送る */
+async function undoKeys(page: Page): Promise<void> {
+  await page.keyboard.down("Control");
+  await page.keyboard.press("z");
+  await page.keyboard.up("Control");
+}
+
+async function redoKeys(page: Page): Promise<void> {
+  await page.keyboard.down("Control");
+  await page.keyboard.press("y");
+  await page.keyboard.up("Control");
+}
+
+/**
+ * ツールスタックからパペットワープを選択し、「下半分を選択した状態」でセッションを開始する。
+ */
+async function startPuppetWarpWithSelection(page: Page, sx: (x: number) => number, sy: (y: number) => number): Promise<void> {
+  // 下半分を矩形選択
+  await page.click('[data-tool="select-rect"]');
+  await page.mouse.move(sx(0), sy(321));
+  await page.mouse.down();
+  await page.mouse.move(sx(640), sy(640), { steps: 6 });
+  await page.mouse.up();
+  await sleep(200);
+  // スタックポップからパペットワープを選択 → セッション開始
+  await page.click('[data-stack="puppet-warp,mesh-warp"] .toolstack__caret');
+  await page.click('[data-stack="puppet-warp,mesh-warp"] .toolstack__pop [data-tool="puppet-warp"]');
+  await sleep(250);
+}
+
+/**
+ * ピン (320,480) を打って (320,350) へドラッグする共通操作。
+ * MLS rigid (Part 1 検証済み: 1 ピン → 全頂点が平行移動) により画像が上へ平行移動し、
+ * 選択範囲の下側に「ワープで画像が無くなる部分」が生じる。
+ */
+async function dragPuppetPin(page: Page, sx: (x: number) => number, sy: (y: number) => number): Promise<void> {
+  // ピンを打ち、押したまま上へドラッグ (クリック=ピン追加 + そのままドラッグで調整)
+  await page.mouse.move(sx(320), sy(480));
+  await page.mouse.down();
+  await page.mouse.move(sx(320), sy(350), { steps: 10 });
+  await page.mouse.up();
+  await sleep(250);
+}
+
+async function main(): Promise<void> {
+  console.log(`\n[Part 1] pure logic: ${pass} passed, ${fail} failed`);
+  if (!existsSync(distFile)) {
+    console.error("dist/index.html がありません。先に `npm run build` を実行してください。");
+    process.exit(1);
+  }
+  const executablePath = BROWSER_CANDIDATES.find((p) => existsSync(p));
+  if (!executablePath) {
+    console.error("Chrome / Edge が見つかりませんでした。");
+    process.exit(1);
+  }
+  const fileUrl = pathToFileURL(distFile).href;
+  const browser = await puppeteer.launch({ executablePath, headless: true, args: ["--no-first-run"] });
+  try {
+    console.log("\n[Part 2] browser E2E");
+    const page = await browser.newPage();
+    page.on("console", (msg) => console.log(`  [browser] ${msg.text()}`));
+    await page.setViewport({ width: 1280, height: 800 });
+    await page.goto(`${fileUrl}?mode=standalone`);
+    await page.waitForSelector("#layer-list li");
+    await sleep(300);
+
+    // fit 表示: view 中心 = ドキュメント中心 (320, 320)。ズームはヘッダー表示から取得
+    const box = (await (await page.$("#view")).boundingBox())!;
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    const zoom = parseFloat((await page.$eval("#ws-zoom", (el) => el.textContent ?? "100%")) || "100") / 100;
+    const sx = (x: number): number => cx + (x - 320) * zoom;
+    const sy = (y: number): number => cy + (y - 320) * zoom;
+
+    // セッション中はピン / メッシュ線のオーバーレイが画像に重なるため、検証は
+    // 複数プローブ点で baseline との色差の最小値 (オーバーレイのない点を採用) を取る
+    const PROBES: Array<[number, number]> = [[480, 480], [470, 465], [492, 492], [455, 485], [486, 452], [508, 505], [440, 440]];
+    const rp = (x: number, y: number) => readPixel(page, (x - 320) * zoom, (y - 320) * zoom);
+    await page.mouse.move(box.x - 40, box.y - 40);
+    await sleep(150);
+    const base = new Map<string, [number, number, number]>();
+    for (const [x, y] of PROBES) base.set(`${x},${y}`, await rp(x, y));
+    const minBaseDiff = async (): Promise<number> => {
+      let min = Infinity;
+      for (const [x, y] of PROBES) min = Math.min(min, colorDiff(base.get(`${x},${y}`)!, await rp(x, y)));
+      return min;
+    };
+    const maxBaseDiff = async (): Promise<number> => {
+      let max = 0;
+      for (const [x, y] of PROBES) max = Math.max(max, colorDiff(base.get(`${x},${y}`)!, await rp(x, y)));
+      return max;
+    };
+
+    /* --- T キーでパペットワープ → セッション開始 --- */
+    await page.keyboard.press("t");
+    await sleep(250);
+    ok("T キーでパペットワープのセッションを開始", (await lastToast(page)).includes("ピンを打ってドラッグで変形"), `toast=${await lastToast(page)}`);
+    ok("セッション開始直後はヘッダー Undo ボタンが無効", !(await undoBtnEnabled(page)));
+
+    /* --- ピンドラッグ → ドラッグ中プレビュー + セッション内履歴 --- */
+    await page.mouse.move(sx(320), sy(320));
+    await page.mouse.down();
+    await page.mouse.move(sx(320), sy(200), { steps: 8 });
+    await sleep(220);
+    const duringDiff = colorDiff(base.get("480,480")!, await rp(480, 480));
+    ok("ピンドラッグ中に変形プレビューが表示される", duringDiff > 4, `diff=${duringDiff}`);
+    ok("操作後にヘッダー Undo ボタンが有効", await undoBtnEnabled(page));
+    await page.mouse.up();
+    await sleep(250);
+
+    /* --- Ctrl+Z でセッション内 Undo / Ctrl+Y で Redo --- */
+    await undoKeys(page);
+    await sleep(250);
+    const undoneDiff = await minBaseDiff();
+    ok("Ctrl+Z でセッション内の 1 操作を取り消し (元画像に戻る)", undoneDiff <= 6, `diff=${undoneDiff}`);
+    await redoKeys(page);
+    await sleep(250);
+    const redoneDiff = await maxBaseDiff();
+    ok("Ctrl+Y でセッション内の操作をやり直し", redoneDiff > 4, `diff=${redoneDiff}`);
+
+    /* --- ヘッダーの Undo / Redo ボタンでもセッション内履歴を操作できる --- */
+    await page.click("#btn-undo");
+    await sleep(250);
+    const headerUndoneDiff = await minBaseDiff();
+    ok("ヘッダー Undo ボタンでセッション内の操作を取り消し", headerUndoneDiff <= 6, `diff=${headerUndoneDiff}`);
+    await page.click("#btn-redo");
+    await sleep(250);
+    const headerRedoneDiff = await maxBaseDiff();
+    ok("ヘッダー Redo ボタンでセッション内の操作をやり直し", headerRedoneDiff > 4, `diff=${headerRedoneDiff}`);
+
+    /* --- 2 つ目のピン (追加・ドラッグ・削除もセッション内履歴に載る) --- */
+    // 1 つ目のドラッグ状態 (現在) のプローブ値を保持しておく。
+    // 1 つ目の変形は平行移動のため、画面位置に打った 2 つ目のピン (original = 変形前空間 /
+    // current = 画面位置) の制約は既存の変形に整合し、追加だけでは画像が変わらない
+    const firstDrag = new Map<string, [number, number, number]>();
+    for (const [x, y] of PROBES) firstDrag.set(`${x},${y}`, await rp(x, y));
+    const maxDiffTo = async (ref: Map<string, [number, number, number]>): Promise<number> => {
+      let max = 0;
+      for (const [x, y] of PROBES) max = Math.max(max, colorDiff(ref.get(`${x},${y}`)!, await rp(x, y)));
+      return max;
+    };
+    await page.mouse.click(sx(420), sy(420)); // ピン追加のみ (画像は不変)
+    await sleep(250);
+    const pinAddedDiff = await maxDiffTo(firstDrag);
+    ok("2 つ目のピンの追加だけでは画像が変わらない", pinAddedDiff <= 6, `diff=${pinAddedDiff}`);
+    await page.mouse.move(sx(420), sy(420));
+    await page.mouse.down();
+    await page.mouse.move(sx(500), sy(480), { steps: 6 });
+    await page.mouse.up();
+    await sleep(250);
+    const secondDrag = new Map<string, [number, number, number]>();
+    for (const [x, y] of PROBES) secondDrag.set(`${x},${y}`, await rp(x, y));
+    const secondDragDiff = await maxDiffTo(firstDrag);
+    ok("2 つ目のピンのドラッグで画像がさらに変化", secondDragDiff > 4, `diff=${secondDragDiff}`);
+    await undoKeys(page); // 2 つ目のドラッグを戻す (ピン 2 は打った位置に残り、画像は 1 つ目の変形へ)
+    await sleep(250);
+    const secondDragUndone = await maxDiffTo(firstDrag);
+    ok("Undo で 2 つ目のピンのドラッグを取り消し", secondDragUndone <= 6, `diff=${secondDragUndone}`);
+    await undoKeys(page); // 2 つ目のピン追加を戻す (画像は不変)
+    await sleep(250);
+    const secondPinUndone = await maxDiffTo(firstDrag);
+    ok("Undo の 2 回目で 2 つ目のピン追加を取り消し", secondPinUndone <= 6, `diff=${secondPinUndone}`);
+    await redoKeys(page); // 2 つ目のピン追加をやり直し (画像は不変)
+    await sleep(250);
+    const secondPinRedone = await maxDiffTo(firstDrag);
+    ok("Redo で 2 つ目のピン追加をやり直し", secondPinRedone <= 6, `diff=${secondPinRedone}`);
+    await redoKeys(page); // 2 つ目のドラッグをやり直し
+    await sleep(250);
+    const secondDragRedone = await maxDiffTo(secondDrag);
+    ok("Redo の 2 回目で 2 つ目のピンのドラッグをやり直し", secondDragRedone <= 6, `diff=${secondDragRedone}`);
+
+    /* --- Enter で確定 → ドキュメント履歴で戻る --- */
+    await page.keyboard.press("Enter");
+    await sleep(250);
+    await page.click('[data-tool="brush"]');
+    await sleep(200);
+    const committedDiff = await maxBaseDiff();
+    ok("Enter 確定で変形がレイヤーに焼き込まれる", committedDiff > 4, `diff=${committedDiff}`);
+    await undoKeys(page);
+    await sleep(250);
+    const docUndoneDiff = await minBaseDiff();
+    ok("確定後の Ctrl+Z (ドキュメント履歴) で元画像に戻る", docUndoneDiff <= 6, `diff=${docUndoneDiff}`);
+
+    /* ================================================================
+     * 選択範囲あり + 反映方法 (上書き / 置換 / 新規レイヤー)
+     * ================================================================ */
+    const page2 = await browser.newPage();
+    page2.on("console", (msg) => console.log(`  [browser2] ${msg.text()}`));
+    await page2.setViewport({ width: 1280, height: 800 });
+    await page2.goto(`${fileUrl}?mode=standalone`);
+    await page2.waitForSelector("#layer-list li");
+    await sleep(300);
+    const box2 = (await (await page2.$("#view")).boundingBox())!;
+    const cx2 = box2.x + box2.width / 2;
+    const cy2 = box2.y + box2.height / 2;
+    const zoom2 = parseFloat((await page2.$eval("#ws-zoom", (el) => el.textContent ?? "100%")) || "100") / 100;
+    const sx2 = (x: number): number => cx2 + (x - 320) * zoom2;
+    const sy2 = (y: number): number => cy2 + (y - 320) * zoom2;
+    const px2 = (docX: number, docY: number) => readPixel(page2, (docX - 320) * zoom2, (docY - 320) * zoom2);
+
+    // カーソルを canvas 外へ退避させてから baseline を取る
+    await page2.mouse.move(box2.x - 40, box2.y - 40);
+    await sleep(150);
+    const baseGap = await px2(320, 600); // ワープで画像が無くなる部分 (元画像が残るはずの点)
+    const baseWarp = await px2(320, 400); // 変形画像が流れ込む部分
+
+    /* --- 上書き (既定): 既存の画像を壊さずに変形結果を上書き --- */
+    await startPuppetWarpWithSelection(page2, sx2, sy2);
+    // ドラッグ中のプレビューを確認 (選択範囲あり): 押したまま途中で読む
+    await page2.mouse.move(sx2(320), sy2(480));
+    await page2.mouse.down();
+    await page2.mouse.move(sx2(320), sy2(350), { steps: 10 });
+    await sleep(220);
+    const selDuring = await px2(320, 400);
+    ok("選択範囲ありでもピンドラッグ中に変形プレビューが表示される", colorDiff(baseWarp, selDuring) > 4, `diff=${colorDiff(baseWarp, selDuring)}`);
+    await page2.mouse.up();
+    await sleep(250);
+    ok("ツールタブに反映方法の 3 択が表示される", await page2.$eval('[data-warp-apply="overlay"]', (el) => (el as HTMLElement).offsetParent !== null));
+    ok("反映方法の既定は「上書き」", await page2.$eval('[data-warp-apply="overlay"]', (el) => el.classList.contains("is-active")));
+    await page2.keyboard.press("Enter"); // 確定 (上書き)
+    await sleep(250);
+    await page2.click('[data-tool="brush"]');
+    await sleep(200);
+    const ovGap = await px2(320, 600);
+    const ovWarp = await px2(320, 400);
+    ok("上書き確定: ワープで画像が無くなる部分に元の画像が残る", colorDiff(baseGap, ovGap) <= 3, `diff=${colorDiff(baseGap, ovGap)}`);
+    ok("上書き確定: 変形結果が元の画像の上に重なって反映される", colorDiff(baseWarp, ovWarp) > 4, `diff=${colorDiff(baseWarp, ovWarp)}`);
+    await undoKeys(page2);
+    await sleep(250);
+
+    /* --- 置換: 既存の画像を変形結果で置き換える --- */
+    await startPuppetWarpWithSelection(page2, sx2, sy2);
+    await dragPuppetPin(page2, sx2, sy2);
+    await page2.click('[data-warp-apply="destructive"]');
+    await sleep(200);
+    await page2.keyboard.press("Enter");
+    await sleep(250);
+    await page2.click('[data-tool="brush"]');
+    await sleep(200);
+    const rpGap = await px2(320, 600);
+    ok("置換確定: ワープで画像が無くなる部分は透明になり元画像が消える", colorDiff(baseGap, rpGap) > 30, `diff=${colorDiff(baseGap, rpGap)}`);
+    await undoKeys(page2);
+    await sleep(250);
+
+    /* --- 新規レイヤー: 変形結果を元のレイヤーの真上へ新規レイヤーとして追加 --- */
+    const beforeCount = await layerCount(page2);
+    await startPuppetWarpWithSelection(page2, sx2, sy2);
+    await dragPuppetPin(page2, sx2, sy2);
+    await page2.click('[data-warp-apply="new-layer"]');
+    await sleep(200);
+    await page2.keyboard.press("Enter");
+    await sleep(300);
+    await page2.click('[data-tool="brush"]');
+    await sleep(200);
+    const afterCount = await layerCount(page2);
+    ok("新規レイヤー確定でレイヤーが 1 枚追加される", afterCount === beforeCount + 1, `before=${beforeCount} after=${afterCount}`);
+    const nlGap = await px2(320, 600);
+    ok("新規レイヤー確定: 元のレイヤーは無変更 (空き部分に元画像が残る)", colorDiff(baseGap, nlGap) <= 3, `diff=${colorDiff(baseGap, nlGap)}`);
+    const activeName = await activeLayerName(page2);
+    ok("結果レイヤーがアクティブになる", activeName.includes("パペットワープ"), `name=${activeName}`);
+  } finally {
+    await browser.close();
+  }
+
+  console.log(`\n[Result] ${pass} passed, ${fail} failed`);
+  if (fail > 0) process.exit(1);
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

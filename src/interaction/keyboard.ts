@@ -35,7 +35,12 @@ function onKeyDown(e: KeyboardEvent): void {
 
   if ((e.ctrlKey || e.metaKey) && k === "z") {
     e.preventDefault();
-    // メッシュワープセッション中はセッション内の Undo/Redo を優先 (確定前の状態をドキュメント履歴に触らせない)
+    // ワープセッション (パペット / メッシュ) 中はセッション内の Undo/Redo を優先 (確定前の状態をドキュメント履歴に触らせない)
+    if (warpSession.active) {
+      if (e.shiftKey) warpSession.redo();
+      else warpSession.undo();
+      return;
+    }
     if (meshWarpSession.active) {
       if (e.shiftKey) meshWarpSession.redo();
       else meshWarpSession.undo();
@@ -47,6 +52,7 @@ function onKeyDown(e: KeyboardEvent): void {
   }
   if ((e.ctrlKey || e.metaKey) && k === "y") {
     e.preventDefault();
+    if (warpSession.active) { warpSession.redo(); return; }
     if (meshWarpSession.active) { meshWarpSession.redo(); return; }
     history.redo();
     return;

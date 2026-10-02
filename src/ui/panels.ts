@@ -9,7 +9,7 @@ import { doc } from "../core/documentStore";
 import { MAX_BRUSH_SIZE, restoreToolSize, setBrushSize, state } from "../core/editorState";
 import { selection } from "../core/selectionStore";
 import { PAINT_TOOLS, TOOLS, TOOL_ICON } from "../core/toolDefs";
-import type { SelMode, ToolId } from "../core/types";
+import type { SelMode, ToolId, WarpApplyMode } from "../core/types";
 import { render } from "../rendering/renderer";
 import { warpSession } from "../puppet/warpSession";
 import { meshWarpSession } from "../meshwarp/warpSession";
@@ -269,6 +269,17 @@ export function bindControls(): void {
     btn.addEventListener("click", () => {
       state.bloatDir = Number((btn as HTMLElement).dataset.bloatDir) === -1 ? -1 : 1;
       $$(".seg__btn[data-bloat-dir]").forEach((b) => b.classList.toggle("is-active", b === btn));
+    }),
+  );
+
+  // ワープの反映方法 (パペット / メッシュ共通: 上書き / 置換 / 新規レイヤー)
+  $$(".seg__btn[data-warp-apply]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      state.warpApplyMode = (btn as HTMLElement).dataset.warpApply as WarpApplyMode;
+      $$(".seg__btn[data-warp-apply]").forEach((b) => b.classList.toggle("is-active", b === btn));
+      // セッション中ならプレビューへも即座に反映する
+      warpSession.refreshPreview();
+      meshWarpSession.refreshPreview();
     }),
   );
 
